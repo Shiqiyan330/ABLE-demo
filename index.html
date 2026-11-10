@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4f6f7">
+  <title>ABLE | Treasury Command Center</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="interbank.css">
+  <link rel="stylesheet" href="rtgs.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="#overview" aria-label="ABLE home"><span class="brand-mark">A</span><span>ABLE<small>TREASURY SYSTEM</small></span></a>
+      <div class="nav-label">WORKSPACE</div>
+      <nav aria-label="Main navigation">
+        <a class="nav-item active" href="#overview"><span class="nav-icon">▦</span>Overview</a>
+        <a class="nav-item" href="#activity"><span class="nav-icon">↗</span>Activity</a>
+        <a class="nav-item" href="#controls"><span class="nav-icon">⚙</span>Risk controls</a>
+        <a class="nav-item" href="#audit"><span class="nav-icon">≡</span>Audit trail</a>
+      </nav>
+      <div class="sidebar-bottom"><span class="live-dot"></span><span>Simulation environment</span><small>LOCAL EVM · MOCK FEEDS</small></div>
+    </aside>
+
+    <main class="main-content" id="overview">
+      <header class="topbar"><div><div class="breadcrumb">Treasury <span>/</span> Command center</div><h1>Interbank settlement</h1></div><div class="top-actions"><div class="clock"><span class="live-dot"></span><span id="clock">--:--:-- HKT</span></div><button id="resetButton" class="button button-reset" type="button" title="Restore initial balances, policy and local chain snapshot">Reset demo</button><button id="haltButton" class="button button-halt" type="button" title="Stop autonomous execution"><span class="halt-square"></span><span id="haltLabel">Emergency halt</span></button><button id="menuButton" class="avatar" aria-label="User menu">TS</button></div></header>
+
+      <section class="status-strip" aria-label="System status"><div><span class="status-indicator"></span><strong id="systemStatus">SYSTEM OPERATIONAL</strong><span class="status-divider"></span><span>RTGS <b id="rtgsStatus">OPEN · 09:00–18:00 HKT</b></span><span class="status-divider"></span><span>Reserve backing <b id="reserveRatio">1:1 · simulated escrow</b></span></div><div class="status-actions"><button id="rtgsToggle" class="text-button" type="button">Close RTGS window</button><span class="env-tag">INTERBANK SIMULATION</span></div></section>
+
+      <section class="demo-flow" aria-label="Demo workflow"><div><strong>One payment. Every step visible.</strong><p>Request → policy checks → liquidity exchange → bank settlement → event stream</p></div><div class="scenario-buttons"><button class="button" data-scenario="cash">Cash payment</button><button class="button button-primary" data-scenario="swap">Liquidity + DvP</button><button class="button" data-scenario="limit">Limit breach</button><button class="button" data-scenario="review">Manual review</button></div></section>
+      <section class="metrics-grid" aria-label="Treasury balances">
+        <article class="metric"><div class="metric-top"><span>Settlement cash</span><span class="metric-icon cash-icon">HKD</span></div><div class="metric-value" id="cashValue">—</div><div class="metric-foot"><span class="tiny-dot green"></span>Available for settlement</div><div class="metric-bar"><i id="cashMetricBar" style="width:0%;background:#19a58b"></i></div></article>
+        <article class="metric"><div class="metric-top"><span>Tokenised MMF</span><span class="metric-icon mmf-icon">MMF</span></div><div class="metric-value" id="mmfValue">—</div><div class="metric-foot"><span class="tiny-dot blue"></span>Available for liquidity exchange</div><div class="metric-bar"><i id="mmfMetricBar" style="width:0%;background:#5e83d6"></i></div></article>
+        <article class="metric"><div class="metric-top"><span>Pending requests</span><span class="metric-icon pending-icon">↻</span></div><div class="metric-value" id="pendingValue">00</div><div class="metric-foot"><span id="reviewCount">0 require review</span><span class="foot-link" data-scroll="activity">View queue →</span></div><div class="metric-bar"><i id="pendingBar" style="width:34%;background:#e7a742"></i></div></article>
+        <article class="metric"><div class="metric-top"><span>Policy clearance</span><span class="metric-icon compliance-icon">✓</span></div><div class="metric-value" id="complianceValue">100<span class="unit">%</span></div><div class="metric-foot"><span class="tiny-dot green"></span><span id="complianceFoot">0 approved / 0 checked</span></div><div class="metric-bar"><i id="complianceBar" style="width:100%;background:#19a58b"></i></div></article>
+      </section>
+
+      <section class="content-grid">
+        <article class="panel allocation-panel"><div class="panel-heading"><div><h2>Participant bank position</h2><p><span id="selectedBankName">Harbour Bank</span> · wCBDC and tokenised MMF</p></div><select id="viewBank" class="bank-view-select" aria-label="Select participant bank"></select></div>
+          <div class="allocation-total"><span>Total tracked assets</span><strong id="totalValue">—</strong></div>
+          <div class="allocation-track"><span id="cashTrack"></span><span id="mmfTrack"></span></div>
+          <div class="legend-row"><div><i class="legend-swatch swatch-cash"></i><span>Settlement cash</span><b id="cashPercent">24%</b></div><div><i class="legend-swatch swatch-mmf"></i><span>Tokenised MMF</span><b id="mmfPercent">76%</b></div></div>
+          <div class="chain-details"><span>ATOMIC LIQUIDITY CONTRACT <b id="chainId">Connecting</b></span><code id="contractAddress">Loading deployed contract…</code><p>MMF and wCBDC exchange in one transaction. If either transfer fails, both revert. The bank payment follows in a separate transaction.</p></div>
+          <div class="panel-note"><span class="note-mark">i</span> Balances belong to the selected participant bank.</div>
+        </article>
+
+        <article class="panel controls-panel" id="controls"><div class="panel-heading"><div><h2>Policy guardrails</h2><p>Autonomous execution envelope</p></div><span class="policy-badge"><i></i>ACTIVE</span></div>
+          <div class="control-row"><div><strong>Per-trade limit</strong><small>Maximum payment amount</small></div><label class="input-prefix"><span>HK$</span><input id="tradeLimit" type="number" min="100000" step="100000" value="2000000" aria-label="Per-trade limit"></label></div>
+          <div class="control-row"><div><strong>Rolling 24h limit</strong><small>All banks · previous 24 hours</small></div><label class="input-prefix"><span>HK$</span><input id="dailyLimit" type="number" min="100000" step="100000" value="5000000" aria-label="Rolling 24-hour limit"></label></div>
+          <div class="control-row"><div><strong>Counterparty allowlist</strong><small>Approved facility endpoints</small></div><span class="allowlist-count">03 <small>active</small></span></div>
+          <div class="control-row"><div><strong>Maximum haircut</strong><small>Applied to MMF conversion</small></div><div class="range-wrap"><input id="haircut" type="range" min="0" max="20" value="5" aria-label="Maximum haircut"><output id="haircutValue">5.0%</output></div></div>
+          <div class="controls-foot"><span>Changes apply to new requests</span><button id="savePolicy" class="text-button" type="button">Save policy</button></div>
+        </article>
+      </section>
+
+        <section class="panel activity-panel" id="activity"><div class="panel-heading"><div><h2>Request activity</h2><p>Policy decisions and confirmed payments</p></div><div class="activity-actions"><label class="search-box"><span>⌕</span><input id="searchInput" type="search" placeholder="Search requests" aria-label="Search requests"></label><select id="filterSelect" aria-label="Filter requests"><option value="all">All requests</option><option value="review">Needs review</option><option value="executed">Executed</option><option value="rejected">Rejected</option></select></div></div>
+          <div class="table-wrap"><table><thead><tr><th>REQUEST</th><th>TIME (HKT)</th><th>FROM → TO</th><th>AMOUNT</th><th>TRIGGER</th><th>POLICY RESULT</th><th>STATUS</th><th>CHAIN TX</th><th>REVIEW</th></tr></thead><tbody id="requestRows"></tbody></table></div>
+          <div class="table-footer"><span id="showingCount">Showing 0 requests</span><span class="listener-status"><i class="live-dot"></i> <b id="listenerStatus">Connecting</b> <span>·</span> Block <b id="blockNumber">—</b></span></div>
+        </section>
+        <section class="panel audit-panel" id="audit"><div class="panel-heading"><div><h2>Decision & audit log</h2><p>Policy decisions and execution history</p></div><button class="text-button" id="clearAudit" type="button">Clear view</button></div><div id="auditList" class="audit-list"></div></section>
+        <section class="panel event-panel" id="events"><div class="panel-heading"><div><h2>Contract event listener</h2><p>SwapExecuted and Transfer · live EVM logs</p></div><span class="policy-badge" id="eventCount">0 EVENTS</span></div><div id="chainEventList" class="chain-event-list">Submit a payment to see confirmed contract events.</div></section>
+        <details class="advanced-panels"><summary>Extended tools · ledger, RTGS and evaluation</summary>        <section class="panel rtgs-panel" id="rtgsBatchPanel"><div class="panel-heading"><div><h2>RTGS reopening reconciliation</h2><p>Simulated ISO 20022 pacs.009 net settlement batches</p></div><span id="rtgsQueueCount" class="policy-badge">NO PENDING NET POSITIONS</span></div><div id="rtgsBatchList" class="rtgs-batch-list"></div></section>
+        <section class="panel ledger-panel" id="shadowLedger"><div class="panel-heading"><div><h2>Shadow ledger</h2><p>Confirmed events · balanced debit and credit postings</p></div><div class="ledger-actions"><span id="ledgerStatus" class="policy-badge">WAITING FOR LEDGER</span><button class="text-button" id="ledgerConnection" type="button" data-action="disconnect">Pause ledger link</button><button class="text-button" id="reconcileLedger" type="button">Retry sync & reconcile</button></div></div><div id="ledgerList" class="ledger-list"></div></section>
+        <section class="panel benchmark-panel" id="benchmarkPanel"><div class="panel-heading"><div><h2>Proposal evaluation</h2><p>Paired ABLE vs Legacy RTGS · matched seeds</p></div><button id="runBenchmark" class="button button-primary" type="button">Run compact evaluation · 60 workloads</button></div><div id="benchmarkMeta" class="benchmark-meta">No evaluation run yet</div><div class="table-wrap"><table><thead><tr><th>CASH BUFFER</th><th>SCENARIO</th><th>ABLE ON TIME</th><th>LEGACY ON TIME</th><th>ABLE P50 / P95</th><th>YIELD DELTA</th><th>BUFFER REDUCTION</th><th>MANUAL REVIEW / UNAUTHORISED</th><th>AUDIT / RECONCILIATION</th></tr></thead><tbody id="benchmarkRows"><tr><td colspan="9">Run the compact paired evaluation to generate scenario results.</td></tr></tbody></table></div></section>
+        </details>
+        <footer class="footer"><span>ABLE Treasury Orchestration · Prototype v0.1</span><span>Local EVM · test tokens · simulated RTGS</span></footer>
+    </main>
+  </div>
+  <dialog id="requestDialog" class="request-dialog">
+    <form id="requestForm" method="dialog">
+      <div class="dialog-heading"><div><span class="dialog-eyebrow">LOCAL EVM · TEST REQUEST</span><h2>New payment request</h2><p>Submit a request to run through RegTech checks and local smart-contract settlement.</p></div><button id="closeDialog" class="icon-button" type="button" aria-label="Close">×</button></div>
+      <div class="form-grid">
+        <label class="form-field"><span>From · Paying bank</span><select id="fromBank"></select></label>
+        <label class="form-field"><span>To · Receiving bank</span><select id="toBank"></select></label>
+        <label class="form-field"><span>Payment amount (HKD)</span><input id="paymentAmount" type="number" min="1" step="0.01" value="500000" required></label>
+        <label class="form-field"><span>Liquidity facility</span><select id="counterpartySelect"><option>Harbour Liquidity Pool</option><option>Meridian Liquidity Pool</option><option>Eastbridge Liquidity Pool</option><option>Unlisted Counterparty</option></select></label>
+        <label class="form-field"><span>Quoted wCBDC output (HKD)</span><input id="quoteOutput" type="number" min="0" step="0.01" value="600000" required></label>
+        <label class="form-field"><span>Minimum output (HKD)</span><input id="minimumOutput" type="number" min="0" step="0.01" value="570000" required></label>
+        <label class="form-field"><span>Quote valid for (seconds)</span><input id="quoteExpiry" type="number" min="5" max="3600" value="60" required></label>
+        <label class="form-field"><span>MMF input (auto-calculated)</span><input id="mmfInput" readonly value="—"></label>
+      </div>
+      <div class="demo-rule-note"><span class="note-mark">i</span><span>Choose a scenario above or adjust the parameters. Every request is checked again before execution.</span></div>
+      <div class="dialog-actions"><button id="cancelRequest" class="button" type="button">Cancel</button><button id="submitRequest" class="button button-primary" type="submit">Run checks & submit</button></div>
+      <section id="requestResult" class="request-result" hidden aria-live="polite"></section>
+    </form>
+  </dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="app.js"></script>
+</body>
+</html>
