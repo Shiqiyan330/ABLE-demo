@@ -1,13 +1,15 @@
-const state = { cash: 0, mmf: 0, halted: false, dailyVolume: 0, block: 0, bankBalances: {}, banks: [], selectedBank: 'harbour', requests: [], audit: [], chainEvents: [] };
+const state = { cash: 0, mmf: 0, bonds: 0, halted: false, dailyVolume: 0, block: 0, bankBalances: {}, banks: [], selectedBank: 'harbour', requests: [], audit: [], chainEvents: [] };
 const fmt = n => `HK$ ${Math.round(n).toLocaleString('en-HK')}`;
 const $ = id => document.getElementById(id);
 let toastTimer;
 function toast(message) { const el = $('toast'); el.textContent = message; el.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 2400); }
 function render() {
-  $('cashValue').textContent = fmt(state.cash); $('mmfValue').textContent = fmt(state.mmf); $('totalValue').textContent = fmt(state.cash + state.mmf);
-  const cashPct = state.cash + state.mmf ? Math.round(state.cash / (state.cash + state.mmf) * 100) : 0;
-  $('cashPercent').textContent = `${cashPct}%`; $('mmfPercent').textContent = `${100 - cashPct}%`; $('cashTrack').style.width = `${cashPct}%`; $('mmfTrack').style.width = `${100 - cashPct}%`;
-  $('cashMetricBar').style.width = `${cashPct}%`; $('mmfMetricBar').style.width = `${100 - cashPct}%`;
+  const assetTotal = state.cash + state.mmf + state.bonds;
+  const cashPct = assetTotal ? state.cash / assetTotal * 100 : 0, mmfPct = assetTotal ? state.mmf / assetTotal * 100 : 0, bondPct = assetTotal ? state.bonds / assetTotal * 100 : 0;
+  $('cashValue').textContent = fmt(state.cash); $('mmfValue').textContent = fmt(state.mmf); $('bondValue').textContent = fmt(state.bonds); $('totalValue').textContent = fmt(assetTotal);
+  $('cashPercent').textContent = `${cashPct.toFixed(1)}%`; $('mmfPercent').textContent = `${mmfPct.toFixed(1)}%`; $('bondPercent').textContent = `${bondPct.toFixed(1)}%`;
+  $('cashTrack').style.width = `${cashPct}%`; $('mmfTrack').style.width = `${mmfPct}%`; $('bondTrack').style.width = `${bondPct}%`;
+  $('cashMetricBar').style.width = `${cashPct}%`; $('mmfMetricBar').style.width = `${mmfPct}%`; $('bondMetricBar').style.width = `${bondPct}%`;
   const pending = state.requests.filter(r => ['Review required', 'Pending'].includes(r.status)).length;
   $('pendingValue').textContent = String(pending).padStart(2, '0'); $('reviewCount').textContent = `${state.requests.filter(r => r.status === 'Review required').length} requires review`;
   const approved = state.requests.filter(r => r.result === 'Approved').length;
@@ -154,14 +156,14 @@ function syncState(data) {
   if (data.data) return syncState(data.data);
   if (data.type === 'snapshot' || data.type === 'reset') return syncState(data.data);
   if (data.type === 'chain-event') { if (!state.chainEvents.some(item => item.key === data.event.key)) state.chainEvents.unshift(data.event); renderChainEvents(); return; }
-  if (data.type === 'swap' || data.type === 'payment-settled') { state.bankBalances = data.bankBalances || state.bankBalances; const selected = state.bankBalances[state.selectedBank]; if (selected) { state.cash = selected.cash; state.mmf = selected.mmf; } state.block = data.block; const row = state.requests.find(r => r.id === data.request.id); if (row) Object.assign(row, data.request, { hash: data.request.txHash || row.hash }); render(); return; }
+  if (data.type === 'swap' || data.type === 'payment-settled') { state.bankBalances = data.bankBalances || state.bankBalances; const selected = state.bankBalances[state.selectedBank]; if (selected) { state.cash = selected.cash; state.mmf = selected.mmf; state.bonds = selected.bonds; } state.block = data.block; const row = state.requests.find(r => r.id === data.request.id); if (row) Object.assign(row, data.request, { hash: data.request.txHash || row.hash }); render(); return; }
   if (data.type === 'request') { state.requests.unshift({ ...data.request, hash: data.request.txHash || '—' }); state.requests = state.requests.slice(0, 50); render(); return; }
   if (data.type === 'audit') { state.audit.unshift({ time: data.audit.time, kind: data.audit.kind, text: `<strong>${data.audit.text.split(' · ')[0]}</strong> · ${data.audit.text.split(' · ').slice(1).join(' · ')}`, hash: data.audit.hash }); render(); return; }
   if (data.type === 'ledger') { renderLedger(data.ledger); return; }
   if (data.type === 'listener-error') { $('listenerStatus').textContent = 'Event scan retrying'; return; }
   if (data.type === 'ledger-sync-error') { $('ledgerStatus').textContent = `${data.pending} POSTINGS WAITING TO REPLAY`; $('ledgerStatus').classList.add('ledger-error'); toast('Settlement confirmed; shadow ledger sync is pending'); return; }
   const snapshot = data.type === 'state' ? data.data : data;
-  if (snapshot.balances) { state.cash = snapshot.balances.cash; state.mmf = snapshot.balances.mmf; }
+  if (snapshot.balances) { state.cash = snapshot.balances.cash; state.mmf = snapshot.balances.mmf; state.bonds = snapshot.balances.bonds || 0; }
   if (snapshot.banks) {
     const from = $('fromBank').value, to = $('toBank').value;
     state.banks = snapshot.banks; state.bankBalances = Object.fromEntries(snapshot.banks.map(bank => [bank.id, bank]));
@@ -169,7 +171,7 @@ function syncState(data) {
     $('viewBank').value = state.selectedBank;
     $('fromBank').value = from || state.selectedBank;
     $('toBank').value = to || snapshot.banks.find(bank => bank.id !== $('fromBank').value)?.id;
-    const selected = state.bankBalances[state.selectedBank]; state.cash = selected.cash; state.mmf = selected.mmf;
+    const selected = state.bankBalances[state.selectedBank]; state.cash = selected.cash; state.mmf = selected.mmf; state.bonds = selected.bonds || 0;
   }
   if (snapshot.chain) { $('contractAddress').textContent = snapshot.chain.contractAddress; $('chainId').textContent = `CHAIN ${snapshot.chain.chainId}`; }
   if (snapshot.chainEvents) { state.chainEvents = snapshot.chainEvents; renderChainEvents(); }
@@ -202,7 +204,7 @@ function renderChainEvents() {
 document.querySelectorAll('[data-scenario]').forEach(button => button.addEventListener('click', () => {
   $('fromBank').value = button.dataset.scenario === 'swap' ? 'meridian' : 'harbour';
   state.selectedBank = $('fromBank').value; $('viewBank').value = state.selectedBank;
-  const position = state.bankBalances[state.selectedBank]; if (position) { state.cash = position.cash; state.mmf = position.mmf; render(); }
+  const position = state.bankBalances[state.selectedBank]; if (position) { state.cash = position.cash; state.mmf = position.mmf; state.bonds = position.bonds || 0; render(); }
   $('toBank').value = 'eastbridge';
   $('paymentAmount').value = button.dataset.scenario === 'swap' ? 1600000 : button.dataset.scenario === 'limit' ? 2500000 : 500000;
   $('counterpartySelect').value = button.dataset.scenario === 'review' ? 'Unlisted Counterparty' : 'Harbour Liquidity Pool';

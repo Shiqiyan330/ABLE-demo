@@ -8,6 +8,8 @@ const cash = { fromBank: 'harbour', toBank: 'eastbridge', amount: 500000, counte
 await api('/api/reset', {});
 try {
   const start = await api('/api/state');
+  assert.deepEqual(start.banks.map(bank => bank.bonds), [1500000, 1000000, 500000]);
+  assert.equal(start.balances.bonds, 1500000);
   for (const [change, expected] of [
     [{ amount: 2500000 }, 'Rejected'], [{ counterparty: 'Unlisted Counterparty' }, 'Manual review'],
     [{ toBank: 'harbour' }, 'Rejected'], [{ amount: -1 }, 'Rejected'],
@@ -45,6 +47,8 @@ try {
   assert.equal((await api('/api/ledger/reconcile')).matched, true);
   await api('/api/halt', {}); assert.equal((await api('/api/payment', cash)).request.reason, 'Emergency halt active');
   await api('/api/reset', {});
+  const resetState = await api('/api/state');
+  assert.deepEqual(resetState.banks.map(bank => bank.bonds), [1500000, 1000000, 500000]);
   const direct = await api('/api/payment', cash); assert.equal(direct.request.status, 'Executed'); assert.equal(direct.request.swapTxHash, '');
   let observed;
   for (let i=0; i<20; i++) { observed = await api('/api/state'); if (observed.chainEvents.some(event => event.hash === direct.request.txHash)) break; await new Promise(resolve => setTimeout(resolve, 250)); }

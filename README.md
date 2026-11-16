@@ -9,7 +9,7 @@ npm install
 npm start
 ```
 
-Open `http://127.0.0.1:4173`. The server compiles and deploys mock tokens, `ReserveBackedToken`, and `AtomicDvPSwap` to a fresh in-memory Ganache chain each time it starts. The prototype has three participant banks (Harbour, Meridian, Eastbridge), each with an independent wallet, wCBDC settlement balance, and MMF balance. Set `$env:PORT='4174'` before `npm start` to use another port.
+Open `http://127.0.0.1:4173`. The server compiles and deploys mock tokens, `ReserveBackedToken`, and `AtomicDvPSwap` to a fresh in-memory Ganache chain each time it starts. The prototype has three participant banks (Harbour, Meridian, Eastbridge), each with an independent wallet, wCBDC settlement balance, tokenised MMF balance, and tokenised government-bond holding. Bonds are tracked on-chain and in the shadow ledger as portfolio assets; the payment DvP flow currently exchanges MMF for wCBDC. Set `$env:PORT='4174'` before `npm start` to use another port.
 
 ## Railway deployment
 
