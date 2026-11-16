@@ -123,7 +123,28 @@ $('ledgerConnection').addEventListener('click', async () => { const action = $('
 $('runBenchmark').addEventListener('click', async () => { const button = $('runBenchmark'); button.disabled = true; button.textContent = 'Running paired workloads…'; try { const response = await fetch('/api/benchmark/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ repetitions: 5, requestCount: 20 }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Benchmark failed'); renderBenchmark(data.benchmark); toast(`Saved raw benchmark results to ${data.resultsFile}`); } catch (error) { toast(`Benchmark failed: ${error.message}`); } finally { button.disabled = false; button.textContent = 'Run compact evaluation · 60 workloads'; } });
 $('menuButton').addEventListener('click', () => toast('Treasury operator · local simulation'));
 document.querySelectorAll('[data-scroll]').forEach(el => el.addEventListener('click', () => document.getElementById(el.dataset.scroll).scrollIntoView({ behavior: 'smooth' })));
-document.querySelectorAll('.nav-item').forEach(el => el.addEventListener('click', e => { document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active')); e.currentTarget.classList.add('active'); }));
+const workspaceTargets = {
+  dashboard: ['demo-flow', 'metrics-grid'],
+  positions: ['.content-grid'],
+  limits: ['.content-grid'],
+  trading: ['demo-flow', '#activity', '#events'],
+  audit: ['#audit', '.advanced-panels']
+};
+function setWorkspace(name) {
+  document.body.dataset.workspace = name;
+  const visible = new Set(workspaceTargets[name] || workspaceTargets.dashboard);
+  for (const selector of new Set(Object.values(workspaceTargets).flat())) {
+    document.querySelectorAll(selector).forEach(element => { element.hidden = !visible.has(selector); });
+  }
+  $('controls').hidden = name !== 'limits';
+  document.querySelector('.allocation-panel').hidden = name === 'limits';
+  document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.workspace === name));
+}
+document.querySelectorAll('.nav-item[data-workspace]').forEach(el => el.addEventListener('click', event => {
+  event.preventDefault();
+  setWorkspace(event.currentTarget.dataset.workspace);
+}));
+setWorkspace('dashboard');
 setInterval(() => { $('clock').textContent = `${nowHkt()} HKT`; }, 1000);
 function syncState(data) {
   if (!data) return;
