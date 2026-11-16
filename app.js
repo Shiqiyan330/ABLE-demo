@@ -132,6 +132,8 @@ const workspaceTargets = {
 };
 function setWorkspace(name) {
   document.body.dataset.workspace = name;
+  const selectedNav = document.querySelector(`.nav-item[data-workspace="${name}"]`);
+  if (selectedNav && location.hash !== selectedNav.hash) history.replaceState(null, '', selectedNav.hash);
   const visible = new Set(workspaceTargets[name] || workspaceTargets.dashboard);
   for (const selector of new Set(Object.values(workspaceTargets).flat())) {
     document.querySelectorAll(selector).forEach(element => { element.hidden = !visible.has(selector); });
@@ -144,7 +146,8 @@ document.querySelectorAll('.nav-item[data-workspace]').forEach(el => el.addEvent
   event.preventDefault();
   setWorkspace(event.currentTarget.dataset.workspace);
 }));
-setWorkspace('dashboard');
+const initialWorkspace = [...document.querySelectorAll('.nav-item[data-workspace]')].find(item => item.hash === location.hash)?.dataset.workspace || 'dashboard';
+setWorkspace(initialWorkspace);
 setInterval(() => { $('clock').textContent = `${nowHkt()} HKT`; }, 1000);
 function syncState(data) {
   if (!data) return;
