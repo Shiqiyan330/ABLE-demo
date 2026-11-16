@@ -9,7 +9,9 @@ npm install
 npm start
 ```
 
-Open `http://127.0.0.1:4173`. The server compiles and deploys mock tokens, `ReserveBackedToken`, and `AtomicDvPSwap` to a fresh in-memory Ganache chain each time it starts. The prototype has three participant banks (Harbour, Meridian, Eastbridge), each with an independent wallet, wCBDC settlement balance, tokenised MMF, government bonds, and corporate bonds. Any of the three liquidity assets can be exchanged for wCBDC before an interbank payment. Set `$env:PORT='4174'` before `npm start` to use another port.
+Open `http://127.0.0.1:4173`. The server compiles and deploys mock tokens, `ReserveBackedToken`, and `AtomicDvPSwap` to a fresh in-memory Ganache chain each time it starts. The prototype has three participant banks (Harbour, Meridian, Eastbridge), each with an independent wallet, wCBDC settlement balance, tokenised MMF, government bonds, corporate bonds, and USD stablecoin. Any of the four liquidity assets can be exchanged for wCBDC before an interbank payment. Set `$env:PORT='4174'` before `npm start` to use another port.
+
+The USD stablecoin uses a local mock token with symbol `USDC` and two decimals. Initial holdings are US$500,000, US$250,000, and US$150,000 respectively. A fixed simulated USD/HKD rate of 7.80 converts holdings to HKD portfolio value and determines the USD input for HKD liquidity: `USD input = HKD output / (7.80 × (1 − haircut))`, rounded up to two decimals. The configured 5% default haircut applies to all demo liquidity assets. Shadow-ledger USDC postings remain in USD minor units; wCBDC postings remain in HKD minor units. Reset restores all holdings.
 
 ## Railway deployment
 
@@ -47,7 +49,7 @@ Contract tests verify successful DvP, unauthorized callers, expiry, minimum outp
 1. Select a paying bank and a different receiving bank, then submit a payment amount.
 2. The service evaluates emergency halt, amount limits, rolling volume, liquidity facility allowlist, route validity, quote constraints, and haircut-adjusted liquidity.
 3. Rejected or escalated requests never call the swap contract.
-4. If the paying bank needs liquidity, its wallet executes `AtomicDvPSwap`: the selected MMF, government-bond, or corporate-bond token moves from the bank to the facility, and wCBDC moves from the facility to the bank atomically.
+4. If the paying bank needs liquidity, its wallet executes `AtomicDvPSwap`: the selected MMF, government-bond, corporate-bond, or USD stablecoin token moves from the bank to the facility, and wCBDC moves from the facility to the bank atomically.
 5. After the swap confirms, the paying bank transfers shared wCBDC to the receiving bank in a separate transaction. This second transaction is interbank settlement; it is not atomic with the MMF swap.
 6. The server scans `SwapExecuted` and `Transfer` logs and broadcasts chain events and participant-bank balances to connected dashboards with Server-Sent Events.
 7. Close RTGS in the dashboard to model off-hours operation. wCBDC payments continue on-chain and accumulate bilateral net positions. Reopening generates a pacs.009-style batch preview; it does not submit to CHATS or debit a separate reserve ledger.

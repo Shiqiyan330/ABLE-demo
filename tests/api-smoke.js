@@ -11,16 +11,37 @@ try {
   assert.deepEqual(start.banks.map(bank => bank.governmentBonds), [1500000, 1000000, 500000]);
   assert.deepEqual(start.banks.map(bank => bank.corporateBonds), [800000, 600000, 300000]);
   assert.equal(start.balances.governmentBonds, 1500000);
-  for (const fundingAsset of ['tGOVBOND', 'tCORPBOND']) {
+  assert.deepEqual(start.banks.map(bank => bank.stablecoin), [500000, 250000, 150000]);
+  assert.equal(start.market.usdHkdRate, 7.8);
+  assert.equal(start.balances.total, 16200000);
+  for (const fundingAsset of ['tGOVBOND', 'tCORPBOND', 'USDC']) {
     const before = await api('/api/state');
     const bondPayment = await api('/api/payment', { ...cash, fromBank: 'meridian', amount: 1100000, fundingAsset, quoteOutput: 100000, minOutput: 90000 });
     assert.equal(bondPayment.request.status, 'Executed'); assert.equal(bondPayment.request.fundingAsset, fundingAsset);
     assert.ok(bondPayment.request.swapTxHash); assert.equal((await api('/api/ledger/reconcile')).matched, true);
     const after = await api('/api/state');
-    const balanceKey = fundingAsset === 'tGOVBOND' ? 'governmentBonds' : 'corporateBonds';
+    const balanceKey = fundingAsset === 'tGOVBOND' ? 'governmentBonds' : fundingAsset === 'tCORPBOND' ? 'corporateBonds' : 'stablecoin';
     assert.ok(after.banks.find(bank => bank.id === 'meridian')[balanceKey] < before.banks.find(bank => bank.id === 'meridian')[balanceKey]);
+    if (fundingAsset === 'USDC') {
+      assert.equal(after.banks.find(bank => bank.id === 'meridian').stablecoin, 236504.72);
+      assert.equal(after.banks.find(bank => bank.id === 'meridian').cash, 0);
+      assert.equal(after.banks.find(bank => bank.id === 'eastbridge').cash, 1900000);
+      let events = [];
+      for (let i = 0; i < 20; i++) { events = (await api('/api/state')).chainEvents; if (events.some(event => event.hash === bondPayment.request.swapTxHash)) break; await new Promise(resolve => setTimeout(resolve, 250)); }
+      assert.ok(events.some(event => event.hash === bondPayment.request.swapTxHash && event.detail.includes('USDC')));
+    }
     await api('/api/reset', {});
   }
+  const insufficientStable = await api('/api/payment', { ...cash, fromBank: 'eastbridge', toBank: 'meridian', amount: 2000000, fundingAsset: 'USDC', quoteOutput: 1200000, minOutput: 1200000 });
+  assert.equal(insufficientStable.request.status, 'Rejected');
+  assert.deepEqual((await api('/api/state')).banks, start.banks);
+  const stableReview = await api('/api/payment', { ...cash, fromBank: 'meridian', amount: 1100000, fundingAsset: 'USDC', quoteOutput: 100000, minOutput: 100000, counterparty: 'Unlisted Counterparty' });
+  assert.equal(stableReview.request.status, 'Review required');
+  const stablePass = await api(`/api/review/${stableReview.request.id}`, { decision: 'pass' });
+  assert.equal(stablePass.request.status, 'Executed');
+  assert.equal(stablePass.state.banks.find(bank => bank.id === 'meridian').stablecoin, 236504.72);
+  assert.equal((await api('/api/ledger/reconcile')).matched, true);
+  await api('/api/reset', {});
   for (const [change, expected] of [
     [{ amount: 2500000 }, 'Rejected'], [{ counterparty: 'Unlisted Counterparty' }, 'Manual review'],
     [{ toBank: 'harbour' }, 'Rejected'], [{ amount: -1 }, 'Rejected'],
@@ -61,6 +82,7 @@ try {
   const resetState = await api('/api/state');
   assert.deepEqual(resetState.banks.map(bank => bank.governmentBonds), [1500000, 1000000, 500000]);
   assert.deepEqual(resetState.banks.map(bank => bank.corporateBonds), [800000, 600000, 300000]);
+  assert.deepEqual(resetState.banks.map(bank => bank.stablecoin), [500000, 250000, 150000]);
   const direct = await api('/api/payment', cash); assert.equal(direct.request.status, 'Executed'); assert.equal(direct.request.swapTxHash, '');
   let observed;
   for (let i=0; i<20; i++) { observed = await api('/api/state'); if (observed.chainEvents.some(event => event.hash === direct.request.txHash)) break; await new Promise(resolve => setTimeout(resolve, 250)); }
