@@ -11,6 +11,8 @@ interface IERC20 {
 contract AtomicDvPSwap {
     address public immutable treasury;
     IERC20 public immutable mmfToken;
+    IERC20 public immutable governmentBondToken;
+    IERC20 public immutable corporateBondToken;
     IERC20 public immutable depositToken;
     uint256 public nonce;
     bool public halted;
@@ -19,6 +21,8 @@ contract AtomicDvPSwap {
 
     event SwapExecuted(bytes32 indexed requestId, address indexed counterparty,
         uint256 mmfIn, uint256 depositsOut, uint256 indexed nonce);
+    event BondSwapExecuted(bytes32 indexed requestId, address indexed bondToken, address indexed counterparty,
+        uint256 bondIn, uint256 depositsOut, uint256 nonce);
     event HaltChanged(bool halted);
 
     error Unauthorized();
@@ -33,10 +37,12 @@ contract AtomicDvPSwap {
         _;
     }
 
-    constructor(address treasury_, address mmf_, address deposits_) {
-        if (treasury_ == address(0) || mmf_ == address(0) || deposits_ == address(0)) revert InvalidRequest();
+    constructor(address treasury_, address mmf_, address governmentBond_, address corporateBond_, address deposits_) {
+        if (treasury_ == address(0) || mmf_ == address(0) || governmentBond_ == address(0) || corporateBond_ == address(0) || deposits_ == address(0)) revert InvalidRequest();
         treasury = treasury_;
         mmfToken = IERC20(mmf_);
+        governmentBondToken = IERC20(governmentBond_);
+        corporateBondToken = IERC20(corporateBond_);
         depositToken = IERC20(deposits_);
         authorizedExecutor[treasury_] = true;
     }
@@ -64,5 +70,21 @@ contract AtomicDvPSwap {
         if (!mmfToken.transferFrom(msg.sender, counterparty, mmfIn)) revert TransferFailed();
         if (!depositToken.transferFrom(counterparty, msg.sender, depositsOut)) revert TransferFailed();
         emit SwapExecuted(requestId, counterparty, mmfIn, depositsOut, executedNonce);
+    }
+
+    function swapTokenizedBond(bytes32 requestId, address bondToken, address counterparty, uint256 bondIn,
+        uint256 depositsOut, uint256 minDepositsOut, uint256 deadline) external returns (uint256 executedNonce) {
+        if (!authorizedExecutor[msg.sender]) revert Unauthorized();
+        if (halted) revert Halted();
+        if (requestId == bytes32(0) || counterparty == address(0) || bondIn == 0 || depositsOut == 0 || settledRequest[requestId]) revert InvalidRequest();
+        if (bondToken != address(governmentBondToken) && bondToken != address(corporateBondToken)) revert InvalidRequest();
+        if (block.timestamp > deadline) revert Expired();
+        if (depositsOut < minDepositsOut) revert Slippage();
+
+        settledRequest[requestId] = true;
+        executedNonce = ++nonce;
+        if (!IERC20(bondToken).transferFrom(msg.sender, counterparty, bondIn)) revert TransferFailed();
+        if (!depositToken.transferFrom(counterparty, msg.sender, depositsOut)) revert TransferFailed();
+        emit BondSwapExecuted(requestId, bondToken, counterparty, bondIn, depositsOut, executedNonce);
     }
 }

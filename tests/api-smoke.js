@@ -8,8 +8,19 @@ const cash = { fromBank: 'harbour', toBank: 'eastbridge', amount: 500000, counte
 await api('/api/reset', {});
 try {
   const start = await api('/api/state');
-  assert.deepEqual(start.banks.map(bank => bank.bonds), [1500000, 1000000, 500000]);
-  assert.equal(start.balances.bonds, 1500000);
+  assert.deepEqual(start.banks.map(bank => bank.governmentBonds), [1500000, 1000000, 500000]);
+  assert.deepEqual(start.banks.map(bank => bank.corporateBonds), [800000, 600000, 300000]);
+  assert.equal(start.balances.governmentBonds, 1500000);
+  for (const fundingAsset of ['tGOVBOND', 'tCORPBOND']) {
+    const before = await api('/api/state');
+    const bondPayment = await api('/api/payment', { ...cash, fromBank: 'meridian', amount: 1100000, fundingAsset, quoteOutput: 100000, minOutput: 90000 });
+    assert.equal(bondPayment.request.status, 'Executed'); assert.equal(bondPayment.request.fundingAsset, fundingAsset);
+    assert.ok(bondPayment.request.swapTxHash); assert.equal((await api('/api/ledger/reconcile')).matched, true);
+    const after = await api('/api/state');
+    const balanceKey = fundingAsset === 'tGOVBOND' ? 'governmentBonds' : 'corporateBonds';
+    assert.ok(after.banks.find(bank => bank.id === 'meridian')[balanceKey] < before.banks.find(bank => bank.id === 'meridian')[balanceKey]);
+    await api('/api/reset', {});
+  }
   for (const [change, expected] of [
     [{ amount: 2500000 }, 'Rejected'], [{ counterparty: 'Unlisted Counterparty' }, 'Manual review'],
     [{ toBank: 'harbour' }, 'Rejected'], [{ amount: -1 }, 'Rejected'],
@@ -48,7 +59,8 @@ try {
   await api('/api/halt', {}); assert.equal((await api('/api/payment', cash)).request.reason, 'Emergency halt active');
   await api('/api/reset', {});
   const resetState = await api('/api/state');
-  assert.deepEqual(resetState.banks.map(bank => bank.bonds), [1500000, 1000000, 500000]);
+  assert.deepEqual(resetState.banks.map(bank => bank.governmentBonds), [1500000, 1000000, 500000]);
+  assert.deepEqual(resetState.banks.map(bank => bank.corporateBonds), [800000, 600000, 300000]);
   const direct = await api('/api/payment', cash); assert.equal(direct.request.status, 'Executed'); assert.equal(direct.request.swapTxHash, '');
   let observed;
   for (let i=0; i<20; i++) { observed = await api('/api/state'); if (observed.chainEvents.some(event => event.hash === direct.request.txHash)) break; await new Promise(resolve => setTimeout(resolve, 250)); }

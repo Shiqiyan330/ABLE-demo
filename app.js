@@ -1,15 +1,15 @@
-const state = { cash: 0, mmf: 0, bonds: 0, halted: false, dailyVolume: 0, block: 0, bankBalances: {}, banks: [], selectedBank: 'harbour', requests: [], audit: [], chainEvents: [] };
+const state = { cash: 0, mmf: 0, governmentBonds: 0, corporateBonds: 0, halted: false, dailyVolume: 0, block: 0, bankBalances: {}, banks: [], selectedBank: 'harbour', requests: [], audit: [], chainEvents: [] };
 const fmt = n => `HK$ ${Math.round(n).toLocaleString('en-HK')}`;
 const $ = id => document.getElementById(id);
 let toastTimer;
 function toast(message) { const el = $('toast'); el.textContent = message; el.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 2400); }
 function render() {
-  const assetTotal = state.cash + state.mmf + state.bonds;
-  const cashPct = assetTotal ? state.cash / assetTotal * 100 : 0, mmfPct = assetTotal ? state.mmf / assetTotal * 100 : 0, bondPct = assetTotal ? state.bonds / assetTotal * 100 : 0;
-  $('cashValue').textContent = fmt(state.cash); $('mmfValue').textContent = fmt(state.mmf); $('bondValue').textContent = fmt(state.bonds); $('totalValue').textContent = fmt(assetTotal);
-  $('cashPercent').textContent = `${cashPct.toFixed(1)}%`; $('mmfPercent').textContent = `${mmfPct.toFixed(1)}%`; $('bondPercent').textContent = `${bondPct.toFixed(1)}%`;
-  $('cashTrack').style.width = `${cashPct}%`; $('mmfTrack').style.width = `${mmfPct}%`; $('bondTrack').style.width = `${bondPct}%`;
-  $('cashMetricBar').style.width = `${cashPct}%`; $('mmfMetricBar').style.width = `${mmfPct}%`; $('bondMetricBar').style.width = `${bondPct}%`;
+  const assetTotal = state.cash + state.mmf + state.governmentBonds + state.corporateBonds;
+  const cashPct = assetTotal ? state.cash / assetTotal * 100 : 0, mmfPct = assetTotal ? state.mmf / assetTotal * 100 : 0, govPct = assetTotal ? state.governmentBonds / assetTotal * 100 : 0, corpPct = assetTotal ? state.corporateBonds / assetTotal * 100 : 0;
+  $('cashValue').textContent = fmt(state.cash); $('mmfValue').textContent = fmt(state.mmf); $('bondValue').textContent = fmt(state.governmentBonds); $('corpBondValue').textContent = fmt(state.corporateBonds); $('totalValue').textContent = fmt(assetTotal);
+  $('cashPercent').textContent = `${cashPct.toFixed(1)}%`; $('mmfPercent').textContent = `${mmfPct.toFixed(1)}%`; $('bondPercent').textContent = `${govPct.toFixed(1)}%`; $('corpBondPercent').textContent = `${corpPct.toFixed(1)}%`;
+  $('cashTrack').style.width = `${cashPct}%`; $('mmfTrack').style.width = `${mmfPct}%`; $('bondTrack').style.width = `${govPct}%`; $('corpBondTrack').style.width = `${corpPct}%`;
+  $('cashMetricBar').style.width = `${cashPct}%`; $('mmfMetricBar').style.width = `${mmfPct}%`; $('bondMetricBar').style.width = `${govPct}%`; $('corpBondMetricBar').style.width = `${corpPct}%`;
   const pending = state.requests.filter(r => ['Review required', 'Pending'].includes(r.status)).length;
   $('pendingValue').textContent = String(pending).padStart(2, '0'); $('reviewCount').textContent = `${state.requests.filter(r => r.status === 'Review required').length} requires review`;
   const approved = state.requests.filter(r => r.result === 'Approved').length;
@@ -80,11 +80,11 @@ $('requestRows').addEventListener('click', async event => {
 });
 $('viewBank').addEventListener('change', async event => { state.selectedBank = event.target.value; const data = await fetch(`/api/state/bank?id=${encodeURIComponent(state.selectedBank)}`).then(r => r.json()); syncState(data); });
 $('closeDialog').addEventListener('click', () => $('requestDialog').close()); $('cancelRequest').addEventListener('click', () => $('requestDialog').close());
-function updateQuote() { const payer = state.bankBalances[$('fromBank')?.value] || { cash: state.cash }; const gap = Math.max(0, Number($('paymentAmount').value || 0) - payer.cash); $('quoteOutput').value = gap.toFixed(2); $('minimumOutput').value = gap.toFixed(2); $('mmfInput').value = gap ? (gap / (1 - Number($('haircut').value) / 100)).toFixed(2) : '0.00'; }
-$('paymentAmount').addEventListener('input', updateQuote); $('haircut').addEventListener('input', updateQuote); $('fromBank').addEventListener('change', updateQuote);
+function updateQuote() { const payer = state.bankBalances[$('fromBank')?.value] || { cash: state.cash }; const gap = Math.max(0, Number($('paymentAmount').value || 0) - payer.cash); $('quoteOutput').value = gap.toFixed(2); $('minimumOutput').value = gap.toFixed(2); $('assetInput').value = gap ? (gap / (1 - Number($('haircut').value) / 100)).toFixed(2) : '0.00'; }
+$('paymentAmount').addEventListener('input', updateQuote); $('haircut').addEventListener('input', updateQuote); $('fromBank').addEventListener('change', updateQuote); $('fundingAsset').addEventListener('change', updateQuote);
 $('requestForm').addEventListener('submit', async event => {
   event.preventDefault(); const button = $('submitRequest'); button.disabled = true; button.textContent = 'Checking request…';
-  const payload = { amount: Number($('paymentAmount').value), fromBank: $('fromBank').value, toBank: $('toBank').value, counterparty: $('counterpartySelect').value, quoteOutput: Number($('quoteOutput').value), minOutput: Number($('minimumOutput').value), validitySeconds: Number($('quoteExpiry').value) };
+  const payload = { amount: Number($('paymentAmount').value), fromBank: $('fromBank').value, toBank: $('toBank').value, counterparty: $('counterpartySelect').value, fundingAsset: $('fundingAsset').value, quoteOutput: Number($('quoteOutput').value), minOutput: Number($('minimumOutput').value), validitySeconds: Number($('quoteExpiry').value) };
   try {
     const preflight = await fetch('/api/evaluate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).then(r => r.json());
     if (preflight.error) throw new Error(preflight.error);
@@ -156,14 +156,14 @@ function syncState(data) {
   if (data.data) return syncState(data.data);
   if (data.type === 'snapshot' || data.type === 'reset') return syncState(data.data);
   if (data.type === 'chain-event') { if (!state.chainEvents.some(item => item.key === data.event.key)) state.chainEvents.unshift(data.event); renderChainEvents(); return; }
-  if (data.type === 'swap' || data.type === 'payment-settled') { state.bankBalances = data.bankBalances || state.bankBalances; const selected = state.bankBalances[state.selectedBank]; if (selected) { state.cash = selected.cash; state.mmf = selected.mmf; state.bonds = selected.bonds; } state.block = data.block; const row = state.requests.find(r => r.id === data.request.id); if (row) Object.assign(row, data.request, { hash: data.request.txHash || row.hash }); render(); return; }
+  if (data.type === 'swap' || data.type === 'payment-settled') { state.bankBalances = data.bankBalances || state.bankBalances; const selected = state.bankBalances[state.selectedBank]; if (selected) Object.assign(state, { cash: selected.cash, mmf: selected.mmf, governmentBonds: selected.governmentBonds, corporateBonds: selected.corporateBonds }); state.block = data.block; const row = state.requests.find(r => r.id === data.request.id); if (row) Object.assign(row, data.request, { hash: data.request.txHash || row.hash }); render(); return; }
   if (data.type === 'request') { state.requests.unshift({ ...data.request, hash: data.request.txHash || '—' }); state.requests = state.requests.slice(0, 50); render(); return; }
   if (data.type === 'audit') { state.audit.unshift({ time: data.audit.time, kind: data.audit.kind, text: `<strong>${data.audit.text.split(' · ')[0]}</strong> · ${data.audit.text.split(' · ').slice(1).join(' · ')}`, hash: data.audit.hash }); render(); return; }
   if (data.type === 'ledger') { renderLedger(data.ledger); return; }
   if (data.type === 'listener-error') { $('listenerStatus').textContent = 'Event scan retrying'; return; }
   if (data.type === 'ledger-sync-error') { $('ledgerStatus').textContent = `${data.pending} POSTINGS WAITING TO REPLAY`; $('ledgerStatus').classList.add('ledger-error'); toast('Settlement confirmed; shadow ledger sync is pending'); return; }
   const snapshot = data.type === 'state' ? data.data : data;
-  if (snapshot.balances) { state.cash = snapshot.balances.cash; state.mmf = snapshot.balances.mmf; state.bonds = snapshot.balances.bonds || 0; }
+  if (snapshot.balances) Object.assign(state, { cash: snapshot.balances.cash, mmf: snapshot.balances.mmf, governmentBonds: snapshot.balances.governmentBonds || 0, corporateBonds: snapshot.balances.corporateBonds || 0 });
   if (snapshot.banks) {
     const from = $('fromBank').value, to = $('toBank').value;
     state.banks = snapshot.banks; state.bankBalances = Object.fromEntries(snapshot.banks.map(bank => [bank.id, bank]));
@@ -171,7 +171,7 @@ function syncState(data) {
     $('viewBank').value = state.selectedBank;
     $('fromBank').value = from || state.selectedBank;
     $('toBank').value = to || snapshot.banks.find(bank => bank.id !== $('fromBank').value)?.id;
-    const selected = state.bankBalances[state.selectedBank]; state.cash = selected.cash; state.mmf = selected.mmf; state.bonds = selected.bonds || 0;
+    const selected = state.bankBalances[state.selectedBank]; Object.assign(state, { cash: selected.cash, mmf: selected.mmf, governmentBonds: selected.governmentBonds || 0, corporateBonds: selected.corporateBonds || 0 });
   }
   if (snapshot.chain) { $('contractAddress').textContent = snapshot.chain.contractAddress; $('chainId').textContent = `CHAIN ${snapshot.chain.chainId}`; }
   if (snapshot.chainEvents) { state.chainEvents = snapshot.chainEvents; renderChainEvents(); }
@@ -204,7 +204,7 @@ function renderChainEvents() {
 document.querySelectorAll('[data-scenario]').forEach(button => button.addEventListener('click', () => {
   $('fromBank').value = button.dataset.scenario === 'swap' ? 'meridian' : 'harbour';
   state.selectedBank = $('fromBank').value; $('viewBank').value = state.selectedBank;
-  const position = state.bankBalances[state.selectedBank]; if (position) { state.cash = position.cash; state.mmf = position.mmf; state.bonds = position.bonds || 0; render(); }
+  const position = state.bankBalances[state.selectedBank]; if (position) { Object.assign(state, { cash: position.cash, mmf: position.mmf, governmentBonds: position.governmentBonds || 0, corporateBonds: position.corporateBonds || 0 }); render(); }
   $('toBank').value = 'eastbridge';
   $('paymentAmount').value = button.dataset.scenario === 'swap' ? 1600000 : button.dataset.scenario === 'limit' ? 2500000 : 500000;
   $('counterpartySelect').value = button.dataset.scenario === 'review' ? 'Unlisted Counterparty' : 'Harbour Liquidity Pool';

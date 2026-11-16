@@ -14,9 +14,13 @@ test('atomic swap enforces access, expiry, minimum output, rollback, replay and 
     const compiled = JSON.parse(solc.compile(JSON.stringify({ language: 'Solidity', sources, settings: { evmVersion: 'shanghai', outputSelection: { '*': { '*': ['abi', 'evm.bytecode.object'] } } } })));
     async function deploy(file, name, args) { const artifact = compiled.contracts[file][name]; const c = await new ContractFactory(artifact.abi, artifact.evm.bytecode.object, owner).deploy(...args); await c.waitForDeployment(); return c; }
     const mmf = await deploy('MockToken.sol', 'MockToken', ['MMF', 'MMF', owner.address, 10000n]);
+    const govBond = await deploy('MockToken.sol', 'MockToken', ['Government Bond', 'tGOVBOND', owner.address, 10000n]);
+    const corpBond = await deploy('MockToken.sol', 'MockToken', ['Corporate Bond', 'tCORPBOND', owner.address, 10000n]);
     const cash = await deploy('MockToken.sol', 'MockToken', ['Cash', 'CASH', facility.address, 10000n]);
-    const swap = await deploy('AtomicDvPSwap.sol', 'AtomicDvPSwap', [owner.address, await mmf.getAddress(), await cash.getAddress()]);
+    const swap = await deploy('AtomicDvPSwap.sol', 'AtomicDvPSwap', [owner.address, await mmf.getAddress(), await govBond.getAddress(), await corpBond.getAddress(), await cash.getAddress()]);
     await (await mmf.approve(await swap.getAddress(), 10000n)).wait();
+    await (await govBond.approve(await swap.getAddress(), 10000n)).wait();
+    await (await corpBond.approve(await swap.getAddress(), 10000n)).wait();
     const deadline = Math.floor(Date.now() / 1000) + 3600;
     const args = [id('request'), facility.address, 1000n, 950n, 950n, deadline];
     await t.test('unauthorized executor is rejected', async () => assert.rejects(swap.connect(outsider).swap.staticCall(...args)));
@@ -33,6 +37,16 @@ test('atomic swap enforces access, expiry, minimum output, rollback, replay and 
       assert.ok(receipt.logs.some(log => { try { return swap.interface.parseLog(log)?.name === 'SwapExecuted'; } catch { return false; } }));
     });
     await t.test('settled request cannot replay', async () => assert.rejects(swap.swap.staticCall(...args)));
+    await t.test('government and corporate bonds exchange atomically for wCBDC', async () => {
+      const govRequest = id('government-bond-request'), corpRequest = id('corporate-bond-request');
+      const govReceipt = await (await swap.swapTokenizedBond(govRequest, await govBond.getAddress(), facility.address, 100n, 95n, 90n, deadline)).wait();
+      const corpReceipt = await (await swap.swapTokenizedBond(corpRequest, await corpBond.getAddress(), facility.address, 200n, 190n, 180n, deadline)).wait();
+      assert.equal(await govBond.balanceOf(facility.address), 100n);
+      assert.equal(await corpBond.balanceOf(facility.address), 200n); assert.equal(await cash.balanceOf(owner.address), 1235n);
+      assert.ok(govReceipt.logs.some(log => { try { return swap.interface.parseLog(log)?.name === 'BondSwapExecuted'; } catch { return false; } }));
+      assert.ok(corpReceipt.logs.some(log => { try { return swap.interface.parseLog(log)?.name === 'BondSwapExecuted'; } catch { return false; } }));
+      await assert.rejects(swap.swapTokenizedBond.staticCall(id('unknown-asset'), await mmf.getAddress(), facility.address, 1n, 1n, 1n, deadline));
+    });
     await t.test('on-chain halt blocks execution', async () => { await (await swap.setHalted(true)).wait(); await assert.rejects(swap.swap.staticCall(id('new'), ...args.slice(1))); });
   } finally { provider.destroy(); await chain.disconnect(); }
 });
