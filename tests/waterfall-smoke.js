@@ -1,0 +1,51 @@
+import assert from 'node:assert/strict';
+import { DEFAULT_WATERFALL } from '../liquidity.js';
+const base = process.env.ABLE_URL || 'http://127.0.0.1:4173';
+async function api(route, body) {
+  const response = await fetch(base + route, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const data = await response.json(); assert.ok(response.ok, JSON.stringify(data)); return data;
+}
+const payment = { fromBank: 'meridian', toBank: 'eastbridge', amount: 1600000, counterparty: 'Harbour Liquidity Pool', fundingAsset: 'AUTO', validitySeconds: 60 };
+await api('/api/reset', {});
+try {
+  assert.deepEqual((await api('/api/state')).waterfall, DEFAULT_WATERFALL);
+  const invalid = await fetch(base + '/api/waterfall', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order: ['USDC', 'USDC'] }) });
+  assert.equal(invalid.status, 400);
+  assert.deepEqual((await api('/api/state')).waterfall, DEFAULT_WATERFALL);
+  const defaultPayment = await api('/api/payment', payment);
+  assert.equal(defaultPayment.request.status, 'Executed');
+  assert.deepEqual(defaultPayment.request.fundingPlan.map(leg => leg.asset), ['wCBDC', 'tMMF']);
+  assert.equal(defaultPayment.state.banks.find(bank => bank.id === 'meridian').cash, 0);
+  assert.equal((await api('/api/ledger/reconcile')).matched, true);
+  await api('/api/reset', {});
+  const usdFirst = ['USDC', 'wCBDC', 'tMMF', 'tGOVBOND', 'tCORPBOND'];
+  await api('/api/waterfall', { order: usdFirst });
+  const held = await api('/api/payment', { ...payment, amount: 1100000, counterparty: 'Unlisted Counterparty' });
+  assert.equal(held.request.status, 'Review required');
+  await api('/api/waterfall', { order: DEFAULT_WATERFALL });
+  const approved = await api(`/api/review/${held.request.id}`, { decision: 'pass' });
+  assert.equal(approved.request.status, 'Executed');
+  assert.deepEqual(approved.request.waterfall, usdFirst);
+  assert.deepEqual(approved.request.fundingPlan.map(leg => leg.asset), ['USDC']);
+  assert.equal(approved.state.banks.find(bank => bank.id === 'meridian').cash, 1000000);
+  assert.equal((await api('/api/ledger/reconcile')).matched, true);
+  await api('/api/reset', {});
+  await api('/api/policy', { tradeLimit: 3000000, dailyLimit: 5000000, haircut: 5 });
+  const allAssets = ['tCORPBOND', 'tGOVBOND', 'USDC', 'wCBDC', 'tMMF'];
+  await api('/api/waterfall', { order: allAssets });
+  const multi = await api('/api/payment', { ...payment, fromBank: 'eastbridge', toBank: 'meridian', amount: 2800000 });
+  assert.equal(multi.request.status, 'Executed');
+  assert.deepEqual(multi.request.fundingPlan.map(leg => leg.asset), allAssets);
+  assert.equal(new Set(multi.request.swapTxHashes).size, 4);
+  const position = multi.state.banks.find(bank => bank.id === 'eastbridge');
+  assert.equal(position.cash, 0); assert.equal(position.corporateBonds, 0); assert.equal(position.governmentBonds, 0); assert.equal(position.stablecoin, 0);
+  assert.equal(position.mmf, 1864736.84);
+  assert.equal((await api('/api/ledger/reconcile')).matched, true);
+  const before = (await api('/api/state')).banks;
+  const failed = await api('/api/payment', { ...payment, fromBank: 'eastbridge', toBank: 'meridian', amount: 2100000 });
+  assert.equal(failed.request.status, 'Rejected');
+  assert.deepEqual((await api('/api/state')).banks, before);
+  const reset = await api('/api/reset', {});
+  assert.deepEqual(reset.waterfall, DEFAULT_WATERFALL); assert.equal(reset.requests.length, 0);
+  console.log('Waterfall API smoke passed: saved order, review snapshot, four swaps, insufficient liquidity, reset and ledger reconciliation');
+} finally { await api('/api/reset', {}); }

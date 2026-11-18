@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { enqueueLedgerEvent, initializeLedger, ledgerSnapshot, markLedgerEventProjected, pendingLedgerCount, pendingLedgerEvents, recordLedgerEvent, reconcileLedger } from './shadow-ledger.js';
 import { runBenchmark } from './benchmark.js';
+import { DEFAULT_WATERFALL, validWaterfall, buildWaterfallPlan } from './liquidity.js';
 import ganache from 'ganache';
 import solc from 'solc';
 import { ContractFactory, NonceManager, Wallet, id, parseUnits, formatUnits, isAddress } from 'ethers';
@@ -26,6 +27,7 @@ const banks = [
   { id: 'eastbridge', name: 'Eastbridge Bank', short: 'EBR', index: 3, signer: null, address: '', initialCash: 800_000, initialMmf: 2_000_000, initialGovBonds: 500_000, initialCorpBonds: 300_000, initialStablecoin: 150_000 }
 ];
 const usdHkdRate = 7.8;
+let waterfall = [...DEFAULT_WATERFALL];
 const counterparties = ['Harbour Liquidity Pool', 'Meridian Liquidity Pool', 'Eastbridge Liquidity Pool'];
 let volumeHistory = [];
 let chainEvents = [];
@@ -231,20 +233,28 @@ async function refreshBankBalances() {
 function balances(bank = banks[0]) { const position = state.bankBalances[bank.id] || { cash: bank.initialCash, mmf: bank.initialMmf, governmentBonds: bank.initialGovBonds, corporateBonds: bank.initialCorpBonds, stablecoin: bank.initialStablecoin }; return { cash: position.cash, mmf: position.mmf, governmentBonds: position.governmentBonds, corporateBonds: position.corporateBonds, stablecoin: position.stablecoin, total: position.cash + position.mmf + position.governmentBonds + position.corporateBonds + position.stablecoin * usdHkdRate }; }
 function addAudit(kind, text, hash = '') { const row = { time: new Date().toLocaleTimeString('en-GB', { timeZone: 'Asia/Hong_Kong', hour12: false }), kind, text, hash }; state.audit.unshift(row); state.audit = state.audit.slice(0, 30); emit({ type: 'audit', audit: row }); }
 function emit(data) { const payload = `data: ${JSON.stringify(data)}\n\n`; for (const response of state.listeners) response.write(payload); }
-function snapshot(selectedBank = banks[0]) { rollingVolume(); return { chainEvents, balances: balances(selectedBank), selectedBank: selectedBank.id, banks: banks.map(bank => ({ id: bank.id, name: bank.name, short: bank.short, address: bank.address, ...(state.bankBalances[bank.id] || {}) })), reserveBacking: { locked: state.reserveLocked, wCBDCSupply: state.wCBDCSupply, coverage: state.wCBDCSupply ? state.reserveLocked / state.wCBDCSupply : 0 }, rtgs: { open: state.rtgsOpen, businessHours: '09:00–18:00 HKT', pendingNetBanks: Object.keys(state.offHoursNet).length, batches: state.rtgsBatches }, ledger: { ...ledgerSnapshot(ledgerDb, 20, state.runId), pendingReplay: pendingRunLedgerCount(), connected: state.ledgerConnected }, benchmark: benchmarkSnapshot(), runId: state.runId, halted: state.halted, requests: state.requests, audit: state.audit, block: state.block, policy: { tradeLimit: state.tradeLimit, dailyLimit: state.dailyLimit, haircut: state.haircut * 100 }, market: { usdHkdRate, quoteType: 'SIMULATED' }, chain: { chainId: state.chainId, contractAddress: state.contractAddress, settlementAsset: 'wCBDC' }, accounts: { treasury: treasuryAddress, liquidityProvider: counterpartyAddress, centralBank: centralBankAddress }, dailyVolume: state.dailyVolume }; }
+function snapshot(selectedBank = banks[0]) { rollingVolume(); return { chainEvents, balances: balances(selectedBank), selectedBank: selectedBank.id, banks: banks.map(bank => ({ id: bank.id, name: bank.name, short: bank.short, address: bank.address, ...(state.bankBalances[bank.id] || {}) })), reserveBacking: { locked: state.reserveLocked, wCBDCSupply: state.wCBDCSupply, coverage: state.wCBDCSupply ? state.reserveLocked / state.wCBDCSupply : 0 }, rtgs: { open: state.rtgsOpen, businessHours: '09:00–18:00 HKT', pendingNetBanks: Object.keys(state.offHoursNet).length, batches: state.rtgsBatches }, ledger: { ...ledgerSnapshot(ledgerDb, 20, state.runId), pendingReplay: pendingRunLedgerCount(), connected: state.ledgerConnected }, benchmark: benchmarkSnapshot(), runId: state.runId, halted: state.halted, requests: state.requests, audit: state.audit, block: state.block, waterfall: [...waterfall], policy: { tradeLimit: state.tradeLimit, dailyLimit: state.dailyLimit, haircut: state.haircut * 100 }, market: { usdHkdRate, quoteType: 'SIMULATED' }, chain: { chainId: state.chainId, contractAddress: state.contractAddress, settlementAsset: 'wCBDC' }, accounts: { treasury: treasuryAddress, liquidityProvider: counterpartyAddress, centralBank: centralBankAddress }, dailyVolume: state.dailyVolume }; }
 function evaluatePayment(input) {
   rollingVolume();
   const amount = Number(input.amount), cpName = String(input.counterparty || '');
   const fromBank = banks.find(bank => bank.id === input.fromBank) || banks[0];
   const toBank = banks.find(bank => bank.id === input.toBank);
   const payerBalances = balances(fromBank), recipient = toBank?.address || '';
-  const fundingAsset = ['tMMF', 'tGOVBOND', 'tCORPBOND', 'USDC'].includes(input.fundingAsset) ? input.fundingAsset : 'tMMF';
+  const fundingAsset = ['AUTO', 'tMMF', 'tGOVBOND', 'tCORPBOND', 'USDC'].includes(input.fundingAsset) ? input.fundingAsset : 'tMMF';
+  const priority = validWaterfall(input.waterfall) ? input.waterfall : waterfall;
+  const plan = fundingAsset === 'AUTO' ? buildWaterfallPlan(amount, payerBalances, priority, state.haircut, usdHkdRate) : null;
   const assetBalance = ({ tMMF: payerBalances.mmf, tGOVBOND: payerBalances.governmentBonds, tCORPBOND: payerBalances.corporateBonds, USDC: payerBalances.stablecoin })[fundingAsset];
   const fundingRate = fundingAsset === 'USDC' ? usdHkdRate : 1;
-  const quoteOutput = Number(input.quoteOutput || Math.max(0, amount - payerBalances.cash));
-  const minOutput = Number(input.minOutput ?? quoteOutput), validitySeconds = Number(input.validitySeconds || 60);
-  const cashNeeded = Math.max(0, amount - payerBalances.cash);
-  const assetInput = cashNeeded ? Math.ceil(quoteOutput / (fundingRate * (1 - state.haircut)) * 100 - 1e-8) / 100 : 0;
+  const quoteOutput = plan ? plan.cashNeeded : Number(input.quoteOutput || Math.max(0, amount - payerBalances.cash));
+  const minOutput = plan ? quoteOutput : Number(input.minOutput ?? quoteOutput), validitySeconds = Number(input.validitySeconds || 60);
+  const cashNeeded = plan ? plan.cashNeeded : Math.max(0, amount - payerBalances.cash);
+  const assetInput = !plan && cashNeeded ? Math.ceil(quoteOutput / (fundingRate * (1 - state.haircut)) * 100 - 1e-8) / 100 : 0;
+  const fundingPlan = plan ? plan.legs : [
+    ...(Math.min(amount, payerBalances.cash) > 0 ? [{ asset: 'wCBDC', assetInput: Math.min(amount, payerBalances.cash), quoteOutput: Math.min(amount, payerBalances.cash) }] : []),
+    ...(cashNeeded > 0 ? [{ asset: fundingAsset, assetInput, quoteOutput, minOutput }] : [])
+  ];
+  const liquidityPassed = plan ? plan.shortfall === 0 : amount <= payerBalances.cash + assetBalance * fundingRate * (1 - state.haircut) && (!cashNeeded || quoteOutput <= assetBalance * fundingRate * (1 - state.haircut));
+  const liquidityReason = plan ? `Waterfall shortfall: HKD ${fmt(plan.shortfall)}` : `Insufficient ${fundingAsset} liquidity after FX and haircut`;
   const checks = [
     { name: 'Emergency halt is off', passed: !state.halted, reason: 'Emergency halt active' },
     { name: 'Positive payment amount', passed: Number.isFinite(amount) && amount > 0, reason: 'Amount must be greater than zero' },
@@ -255,7 +265,7 @@ function evaluatePayment(input) {
     { name: 'Quote output covers cash gap', passed: Number.isFinite(quoteOutput) && quoteOutput >= cashNeeded, reason: `Required output is at least HKD ${fmt(cashNeeded)}` },
     { name: 'Minimum output within quote', passed: Number.isFinite(minOutput) && minOutput >= 0 && minOutput <= quoteOutput, reason: 'Minimum output must not exceed quoted output' },
     { name: 'Quote expiry window', passed: Number.isInteger(validitySeconds) && validitySeconds >= 5 && validitySeconds <= 3600, reason: 'Validity must be 5 to 3,600 seconds' },
-    { name: 'Haircut-adjusted liquidity', passed: amount <= payerBalances.cash + assetBalance * fundingRate * (1 - state.haircut) && (!cashNeeded || quoteOutput <= assetBalance * fundingRate * (1 - state.haircut)), reason: `Insufficient ${fundingAsset} liquidity after FX and haircut` }
+    { name: 'Haircut-adjusted liquidity', passed: liquidityPassed, reason: liquidityReason }
   ];
   let result = 'Approved', reason = 'All policy checks passed';
   if (state.halted) [result, reason] = ['Rejected', 'Emergency halt active'];
@@ -267,9 +277,9 @@ function evaluatePayment(input) {
   else if (!toBank || toBank.id === fromBank.id) [result, reason] = ['Rejected', 'Choose different sending and receiving banks'];
   else if (quoteOutput < cashNeeded || minOutput > quoteOutput || minOutput < 0) [result, reason] = ['Rejected', 'Quote output or minimum output is invalid'];
   else if (validitySeconds < 5 || validitySeconds > 3600) [result, reason] = ['Rejected', 'Quote validity must be 5 to 3,600 seconds'];
-  else if (amount > payerBalances.cash + assetBalance * fundingRate * (1 - state.haircut)) [result, reason] = ['Rejected', `Insufficient ${fundingAsset} liquidity after FX and haircut`];
+  else if (!liquidityPassed) [result, reason] = ['Rejected', liquidityReason];
   else if (checks.some(check => !check.passed)) [result, reason] = ['Rejected', 'One or more policy checks failed'];
-  return { amount, cpName, recipient, fromBank, toBank, fundingAsset, assetInput, quoteOutput, minOutput, validitySeconds, cashNeeded, checks, result, reason };
+  return { amount, cpName, recipient, fromBank, toBank, fundingAsset, assetInput, quoteOutput, minOutput, validitySeconds, cashNeeded, fundingPlan, waterfall: fundingAsset === 'AUTO' ? [...priority] : null, checks, result, reason };
 }
 async function executeLiquiditySwap({ bank, requestId, fundingAsset, assetInput, quoteOutput, minOutput, validitySeconds }) {
   const inputAmount = parseUnits(assetInput.toFixed(2), 2), output = parseUnits(quoteOutput.toFixed(2), 2), minimum = parseUnits(minOutput.toFixed(2), 2);
@@ -288,12 +298,32 @@ function swapLedgerEntries(bankId, fundingAsset, inputAmount, output) {
     { account: 'liquidity-facility', asset: 'wCBDC', side: 'CREDIT', amountMinor: Number(output) }
   ];
 }
+async function executeFundingPlan(request, evaluation, bank, manualApproval = false) {
+  request.fundingPlan = evaluation.fundingPlan;
+  request.cashGap = evaluation.cashNeeded;
+  request.swapTxHashes = [];
+  const swaps = evaluation.fundingPlan.filter(leg => leg.asset !== 'wCBDC');
+  for (const [index, leg] of swaps.entries()) {
+    const { receipt, inputAmount } = await executeLiquiditySwap({ bank, requestId: id(`${request.id}:funding:${index}`), fundingAsset: leg.asset, ...leg, validitySeconds: evaluation.validitySeconds });
+    leg.txHash = receipt.hash; request.swapTxHash = receipt.hash; request.swapTxHashes.push(receipt.hash); state.block = receipt.blockNumber;
+    request.ledgerSwapStatus = postLedgerEvent({ key: `${state.runId}:${request.id}:swap:${index}`, type: 'DVP_SWAP', requestId: request.id, transactionHash: receipt.hash, blockNumber: receipt.blockNumber, details: { payer: bank.id, facility: 'liquidity-facility', fundingAsset: leg.asset, manualApproval }, entries: swapLedgerEntries(bank.id, leg.asset, inputAmount, parseUnits(leg.quoteOutput.toFixed(2), 2)) });
+    addAudit('good', `Atomic DvP confirmed · ${request.id} · ${leg.asset} → ${fmt(leg.quoteOutput)} HKD`, receipt.hash);
+  }
+  if (swaps.length) await refreshBankBalances();
+}
 async function handle(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   if (url.pathname === '/api/events') { res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' }); state.listeners.add(res); res.write(`data: ${JSON.stringify({ type: 'snapshot', data: snapshot() })}\n\n`); req.on('close', () => state.listeners.delete(res)); return; }
   if (url.pathname.startsWith('/api/')) {
     res.setHeader('Content-Type', 'application/json');
     if (req.method === 'GET' && url.pathname === '/api/state') { res.end(JSON.stringify(snapshot())); return; }
+    if (req.method === 'POST' && url.pathname === '/api/waterfall') {
+      let body = ''; for await (const chunk of req) body += chunk;
+      let input; try { input = JSON.parse(body); } catch { res.writeHead(400); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
+      if (!validWaterfall(input.order)) { res.writeHead(400); res.end(JSON.stringify({ error: 'Include each of the five assets exactly once' })); return; }
+      waterfall = [...input.order]; addAudit('good', `Funding waterfall updated · ${waterfall.join(' → ')}`);
+      const data = snapshot(); emit({ type: 'state', data }); res.end(JSON.stringify(data)); return;
+    }
     if (req.method === 'GET' && url.pathname === '/api/ledger') { res.end(JSON.stringify({ ...ledgerSnapshot(ledgerDb, 50, state.runId), pendingReplay: pendingRunLedgerCount(), connected: state.ledgerConnected })); return; }
     if (req.method === 'POST' && url.pathname === '/api/ledger/replay') { const result = replayPendingLedgerEvents(); res.end(JSON.stringify(result)); return; }
     if (req.method === 'GET' && url.pathname === '/api/ledger/reconcile') { res.end(JSON.stringify(reconcileLedger(ledgerDb, await chainAccountBalances(), state.runId))); return; }
@@ -320,6 +350,7 @@ async function handle(req, res) {
       state.requests = []; state.audit = []; state.pendingLedgerEvents = []; state.ledgerConnected = true; state.halted = false; state.dailyVolume = 0; volumeHistory = []; chainEvents = [];
       state.rtgsOpen = true; state.offHoursNet = {}; state.rtgsBatches = [];
       state.dailyLimit = 5_000_000; state.tradeLimit = 2_000_000; state.haircut = 0.05; state.serial = 1008;
+      waterfall = [...DEFAULT_WATERFALL];
       ledgerDb.exec('DELETE FROM ledger_entries; DELETE FROM ledger_events; DELETE FROM ledger_inbox'); state.runId = randomUUID();
       await refreshBankBalances(); const initialBalances = balances(banks[0]); state.cash = initialBalances.cash; state.mmf = initialBalances.mmf;
       state.block = Number(await provider.send('eth_blockNumber', [])); eventCursor = state.block;
@@ -330,7 +361,7 @@ async function handle(req, res) {
       let body = ''; for await (const chunk of req) body += chunk;
       let input; try { input = JSON.parse(body); } catch { res.writeHead(400); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
       const evaluation = evaluatePayment(input);
-      res.end(JSON.stringify({ result: evaluation.result, reason: evaluation.reason, checks: evaluation.checks })); return;
+      res.end(JSON.stringify({ result: evaluation.result, reason: evaluation.reason, checks: evaluation.checks, fundingPlan: evaluation.fundingPlan, waterfall: evaluation.waterfall })); return;
     }
     if (req.method === 'POST' && url.pathname === '/api/payment') {
       let body = ''; for await (const chunk of req) body += chunk;
@@ -342,17 +373,11 @@ async function handle(req, res) {
       const { result, reason } = evaluation;
       const request = { id: idText, chainRequestId, time: new Date().toLocaleTimeString('en-GB', { timeZone: 'Asia/Hong_Kong', hour12: false }), from: fromBank.address, to: recipient, fromBank: fromBank.id, fromBankName: fromBank.name, toBank: toBank?.id, toBankName: toBank?.name, counterparty: cpName, amount, cashGap: cashNeeded, fundingAsset, assetInput, quoteOutput, minOutput, trigger: 'Interbank payment', result, checks, status: result === 'Approved' ? 'Pending' : result === 'Manual review' ? 'Review required' : 'Rejected', swapTxHash: '', txHash: '', reason };
       request.fundingRate = fundingAsset === 'USDC' ? usdHkdRate : 1; request.haircutPct = state.haircut * 100;
+      request.fundingPlan = evaluation.fundingPlan; request.waterfall = evaluation.waterfall;
       state.requests.unshift(request); state.requests = state.requests.slice(0, 50); emit({ type: 'request', request });
       if (result === 'Approved') {
         try {
-          const cashNeeded = Math.max(0, amount - balances(fromBank).cash);
-          if (cashNeeded > 0) {
-            const { receipt, inputAmount } = await executeLiquiditySwap({ bank: fromBank, requestId: chainRequestId, fundingAsset, assetInput, quoteOutput, minOutput, validitySeconds });
-            request.swapTxHash = receipt.hash; state.block = receipt.blockNumber;
-            request.ledgerSwapStatus = postLedgerEvent({ key: `${state.runId}:${idText}:swap`, type: 'DVP_SWAP', requestId: idText, transactionHash: receipt.hash, blockNumber: receipt.blockNumber, details: { payer: fromBank.id, facility: 'liquidity-facility', fundingAsset }, entries: swapLedgerEntries(fromBank.id, fundingAsset, inputAmount, parseUnits(quoteOutput.toFixed(2), 2)) });
-            await refreshBankBalances(); const payerPosition = balances(fromBank); state.cash = payerPosition.cash; state.mmf = payerPosition.mmf;
-            addAudit('good', `Atomic DvP confirmed · ${idText} · ${fmt(cashNeeded)} HKD liquidity raised`, receipt.hash);
-          }
+          await executeFundingPlan(request, evaluation, fromBank);
           const payment = await deposits.connect(fromBank.signer).transfer(recipient, parseUnits(amount.toFixed(2), 2));
           const paymentReceipt = await payment.wait(); state.block = paymentReceipt.blockNumber; request.status = 'Executed'; request.txHash = paymentReceipt.hash;
           volumeHistory.push({ time: Date.now(), amount }); rollingVolume();
@@ -383,7 +408,7 @@ async function handle(req, res) {
       }
       if (decision !== 'pass') { res.writeHead(400); res.end(JSON.stringify({ error: 'Decision must be pass or reject' })); return; }
       const payer = banks.find(bank => bank.id === request.fromBank), payee = banks.find(bank => bank.id === request.toBank);
-      const input = { amount: request.amount, fromBank: request.fromBank, toBank: request.toBank, counterparty: request.counterparty, fundingAsset: request.fundingAsset, quoteOutput: request.quoteOutput, minOutput: request.minOutput, validitySeconds: 60, manualApproval: true };
+      const input = { amount: request.amount, fromBank: request.fromBank, toBank: request.toBank, counterparty: request.counterparty, fundingAsset: request.fundingAsset, waterfall: request.waterfall, quoteOutput: request.quoteOutput, minOutput: request.minOutput, validitySeconds: 60, manualApproval: true };
       const evaluation = evaluatePayment(input);
       request.checks = evaluation.checks; request.reviewedAt = new Date().toISOString(); request.reviewDecision = 'Pass';
       if (evaluation.result !== 'Approved') {
@@ -392,11 +417,7 @@ async function handle(req, res) {
       }
       try {
         const { amount, cashNeeded, fundingAsset, assetInput, quoteOutput, minOutput, validitySeconds } = evaluation; request.result = 'Approved'; request.assetInput = assetInput; request.fundingRate = fundingAsset === 'USDC' ? usdHkdRate : 1; request.haircutPct = state.haircut * 100;
-        if (cashNeeded > 0) {
-          const { receipt, inputAmount } = await executeLiquiditySwap({ bank: payer, requestId: request.chainRequestId, fundingAsset, assetInput, quoteOutput, minOutput, validitySeconds });
-          request.swapTxHash = receipt.hash; state.block = receipt.blockNumber;
-          request.ledgerSwapStatus = postLedgerEvent({ key: `${state.runId}:${request.id}:swap`, type: 'DVP_SWAP', requestId: request.id, transactionHash: receipt.hash, blockNumber: receipt.blockNumber, details: { payer: payer.id, facility: 'liquidity-facility', manualApproval: true, fundingAsset }, entries: swapLedgerEntries(payer.id, fundingAsset, inputAmount, parseUnits(quoteOutput.toFixed(2), 2)) });
-        }
+        await executeFundingPlan(request, evaluation, payer, true);
         const receipt = await (await deposits.connect(payer.signer).transfer(payee.address, parseUnits(amount.toFixed(2), 2))).wait();
         request.status = 'Executed'; request.txHash = receipt.hash; request.reason = 'Approved by reviewer; policy checks passed'; request.ledgerPaymentStatus = postLedgerEvent({ key: `${state.runId}:${request.id}:payment`, type: 'INTERBANK_PAYMENT', requestId: request.id, transactionHash: receipt.hash, blockNumber: receipt.blockNumber, details: { payer: payer.id, beneficiary: payee.id, manualApproval: true }, entries: [
           { account: payer.id, asset: 'wCBDC', side: 'CREDIT', amountMinor: minor(amount) }, { account: payee.id, asset: 'wCBDC', side: 'DEBIT', amountMinor: minor(amount) }

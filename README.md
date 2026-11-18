@@ -13,6 +13,14 @@ Open `http://127.0.0.1:4173`. The server compiles and deploys mock tokens, `Rese
 
 The USD stablecoin uses a local mock token with symbol `USDC` and two decimals. Initial holdings are US$500,000, US$250,000, and US$150,000 respectively. A fixed simulated USD/HKD rate of 7.80 converts holdings to HKD portfolio value and determines the USD input for HKD liquidity: `USD input = HKD output / (7.80 × (1 − haircut))`, rounded up to two decimals. The configured 5% default haircut applies to all demo liquidity assets. Shadow-ledger USDC postings remain in USD minor units; wCBDC postings remain in HKD minor units. Reset restores all holdings.
 
+## Funding waterfall and asset scenarios
+
+Dashboard has an editable funding order, shared across participant banks. Use the up/down buttons to save changes. The default is **wCBDC → MMF → government bonds → USD stablecoin → corporate bonds**. New waterfall requests allocate against current balances in this order, applying the saved haircut and simulated FX rate. Placing an asset before cash converts it first and preserves cash where the earlier assets cover the payment. Inputs round up to token cents; available output rounds down to HKD cents. A shortfall blocks execution before swaps start.
+
+Each request shows a funding breakdown. A queued manual review keeps its submitted order and recalculates amounts against current holdings and policy when approved. Each conversion is a separate atomic DvP transaction with its own request ID and ledger posting; the final wCBDC payment is another transaction. The complete sequence spans multiple transactions. The saved order lives in service memory; Reset demo and service restarts restore the default.
+
+The scenario cards load cash, MMF, government-bond, corporate-bond and USD-stablecoin examples. The five asset cases select cash plus a named asset; **Compare the funding order** uses the saved waterfall. They use current holdings, so Reset demo gives each case its initial setup. Run `npm test`, `node tests/api-smoke.js` and `node tests/waterfall-smoke.js` against a local service to verify rules, conversions, ordering and reconciliation.
+
 ## Railway deployment
 
 Deploy this as one Node.js service. Set `ABLE_DATA_DIR` to the mounted persistent volume path (for example `/data`) so SQLite and benchmark results persist. The Ganache chain is in memory and redeploys with fresh test accounts and contract addresses after each restart. Bind address is `0.0.0.0`; Railway supplies `PORT`. Do not use production funds or keys.

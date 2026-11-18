@@ -29,7 +29,7 @@
 
       <section class="status-strip" aria-label="System status"><div><span class="status-indicator"></span><strong id="systemStatus">SYSTEM OPERATIONAL</strong><span class="status-divider"></span><span>RTGS <b id="rtgsStatus">OPEN · 09:00–18:00 HKT</b></span><span class="status-divider"></span><span>Reserve backing <b id="reserveRatio">1:1 · simulated escrow</b></span></div><div class="status-actions"><button id="rtgsToggle" class="text-button" type="button">Close RTGS window</button><span class="env-tag">INTERBANK SIMULATION</span></div></section>
 
-      <section class="demo-flow" aria-label="Demo workflow"><div><strong>One payment. Every step visible.</strong><p>Request → policy checks → liquidity exchange → bank settlement → event stream</p></div><div class="scenario-buttons"><button class="button" data-scenario="cash">Cash payment</button><button class="button button-primary" data-scenario="swap">Liquidity + DvP</button><button class="button" data-scenario="limit">Limit breach</button><button class="button" data-scenario="review">Manual review</button></div></section>
+      <section class="demo-flow" aria-label="Demo workflow"><div><strong>One payment. Every step visible.</strong><p>Request → policy checks → liquidity exchange → bank settlement → event stream</p></div><div class="scenario-buttons"><button class="button button-primary" data-scenario="auto">New payment · waterfall</button><button class="button" data-scenario="limit">Limit breach</button><button class="button" data-scenario="review">Manual review</button></div></section>
       <section class="metrics-grid" aria-label="Treasury balances">
         <article class="metric"><div class="metric-top"><span>Settlement cash</span><span class="metric-icon cash-icon">HKD</span></div><div class="metric-value" id="cashValue">—</div><div class="metric-foot"><span class="tiny-dot green"></span>Available for settlement</div><div class="metric-bar"><i id="cashMetricBar" style="width:0%;background:#19a58b"></i></div></article>
         <article class="metric"><div class="metric-top"><span>Tokenised MMF</span><span class="metric-icon mmf-icon">MMF</span></div><div class="metric-value" id="mmfValue">—</div><div class="metric-foot"><span class="tiny-dot blue"></span>Available for liquidity exchange</div><div class="metric-bar"><i id="mmfMetricBar" style="width:0%;background:#5e83d6"></i></div></article>
@@ -38,6 +38,28 @@
         <article class="metric"><div class="metric-top"><span>USD stablecoin</span><span class="metric-icon stablecoin-icon">USD</span></div><div class="metric-value" id="stablecoinValue">—</div><div class="metric-foot"><span class="tiny-dot stablecoin-dot"></span>FX-convertible liquidity</div><div class="metric-bar"><i id="stablecoinMetricBar" style="width:100%;background:#198b78"></i></div></article>
         <article class="metric"><div class="metric-top"><span>Pending requests</span><span class="metric-icon pending-icon">↻</span></div><div class="metric-value" id="pendingValue">00</div><div class="metric-foot"><span id="reviewCount">0 require review</span><span class="foot-link" data-scroll="activity">View queue →</span></div><div class="metric-bar"><i id="pendingBar" style="width:34%;background:#e7a742"></i></div></article>
         <article class="metric"><div class="metric-top"><span>Simulated risk checks</span><span class="metric-icon compliance-icon">✓</span></div><div class="metric-value" id="complianceValue">100<span class="unit">%</span></div><div class="metric-foot"><span class="tiny-dot green"></span><span id="complianceFoot">0 approved / 0 checked</span></div><div class="metric-bar"><i id="complianceBar" style="width:100%;background:#19a58b"></i></div></article>
+      </section>
+
+      <section class="funding-workspace" aria-label="Funding strategy and demo cases">
+        <article class="panel waterfall-panel">
+          <div class="panel-heading"><div><h2>Funding waterfall</h2><p>Use assets in order until the payment is covered</p></div><button id="restoreWaterfall" class="text-button" type="button">Default order</button></div>
+          <div class="waterfall-toolbar"><label for="fundingBank">Paying bank</label><select id="fundingBank" class="bank-view-select"></select><span id="waterfallStatus" role="status">Saved order · shared across banks</span></div>
+          <ol id="waterfallList" class="waterfall-list"></ol>
+          <p class="funding-note">Move assets up or down. Assets ahead of cash are converted first, preserving the cash balance. All payments settle in HKD wCBDC.</p>
+          <div id="fundingLast" class="funding-last"></div>
+        </article>
+        <article class="panel cases-panel">
+          <div class="panel-heading"><div><h2>Settlement scenarios</h2><p>Load a request, inspect its funding route, then run checks</p></div><span class="policy-badge">5 ASSETS</span></div>
+          <div class="case-grid">
+            <button class="case-card" data-scenario="cash"><span class="case-tag">01 · wCBDC</span><strong>Cash on hand</strong><span>Harbour → Eastbridge · HK$500k</span><small>Pay directly from settlement cash.</small></button>
+            <button class="case-card" data-scenario="swap"><span class="case-tag">02 · MMF</span><strong>Release MMF liquidity</strong><span>Meridian → Eastbridge · HK$1.6m</span><small>Cash + MMF exchange through atomic DvP.</small></button>
+            <button class="case-card" data-scenario="government"><span class="case-tag">03 · GOVERNMENT BONDS</span><strong>Mobilise sovereign holdings</strong><span>Meridian → Eastbridge · HK$1.6m</span><small>Use government bonds to fund the cash gap.</small></button>
+            <button class="case-card" data-scenario="stablecoin"><span class="case-tag">04 · USD STABLECOIN</span><strong>Bridge USD into HKD</strong><span>Meridian → Eastbridge · HK$1.6m</span><small>USD stablecoin → HKD wCBDC at 7.80.</small></button>
+            <button class="case-card" data-scenario="corporate"><span class="case-tag">05 · CORPORATE BONDS</span><strong>Unlock corporate holdings</strong><span>Meridian → Eastbridge · HK$1.4m</span><small>Use corporate bonds to fund the cash gap.</small></button>
+            <button class="case-card case-waterfall" data-scenario="auto"><span class="case-tag">06 · YOUR WATERFALL</span><strong>Compare the funding order</strong><span>Meridian → Eastbridge · HK$1.6m</span><small>Load the same payment with your saved order.</small></button>
+          </div>
+          <p class="funding-note">Cases use current holdings and saved risk controls. Reset demo restores balances and the default order.</p>
+        </article>
       </section>
 
       <section class="content-grid">
@@ -53,7 +75,7 @@
           <div class="control-row"><div><strong>Per-trade limit</strong><small>Maximum payment amount</small></div><label class="input-prefix"><span>HK$</span><input id="tradeLimit" type="number" min="100000" step="100000" value="2000000" aria-label="Per-trade limit"></label></div>
           <div class="control-row"><div><strong>Rolling 24h limit</strong><small>All banks · previous 24 hours</small></div><label class="input-prefix"><span>HK$</span><input id="dailyLimit" type="number" min="100000" step="100000" value="5000000" aria-label="Rolling 24-hour limit"></label></div>
           <div class="control-row"><div><strong>Counterparty allowlist</strong><small>Approved facility endpoints</small></div><span class="allowlist-count">03 <small>active</small></span></div>
-          <div class="control-row"><div><strong>Maximum haircut</strong><small>Applied to MMF conversion</small></div><div class="range-wrap"><input id="haircut" type="range" min="0" max="20" value="5" aria-label="Maximum haircut"><output id="haircutValue">5.0%</output></div></div>
+          <div class="control-row"><div><strong>Maximum haircut</strong><small>Applied to asset conversion</small></div><div class="range-wrap"><input id="haircut" type="range" min="0" max="20" value="5" aria-label="Maximum haircut"><output id="haircutValue">5.0%</output></div></div>
           <div class="controls-foot"><span>Changes apply to new requests</span><button id="savePolicy" class="text-button" type="button">Save policy</button></div>
         </article>
       </section>
@@ -82,15 +104,16 @@
         <label class="form-field"><span>Quoted wCBDC output (HKD)</span><input id="quoteOutput" type="number" min="0" step="0.01" value="600000" required></label>
         <label class="form-field"><span>Minimum output (HKD)</span><input id="minimumOutput" type="number" min="0" step="0.01" value="570000" required></label>
         <label class="form-field"><span>Quote valid for (seconds)</span><input id="quoteExpiry" type="number" min="5" max="3600" value="60" required></label>
-        <label class="form-field"><span>Liquidity asset</span><select id="fundingAsset"><option value="tMMF">Tokenised MMF (HKD)</option><option value="tGOVBOND">Government bond (HKD)</option><option value="tCORPBOND">Corporate bond (HKD)</option><option value="USDC">USD stablecoin</option></select></label>
+        <label class="form-field"><span>Funding route</span><select id="fundingAsset"><option value="AUTO">Use saved waterfall</option><option value="tMMF">Cash + tokenised MMF (HKD)</option><option value="tGOVBOND">Cash + government bond (HKD)</option><option value="tCORPBOND">Cash + corporate bond (HKD)</option><option value="USDC">Cash + USD stablecoin</option></select></label>
         <label class="form-field"><span id="assetInputLabel">Asset input after haircut</span><input id="assetInput" readonly value="—"></label>
       </div>
       <div class="demo-rule-note"><span class="note-mark">i</span><span id="quoteNote">Every request is checked again before execution.</span></div>
+      <section id="fundingPreview" class="funding-preview" aria-live="polite"></section>
       <div class="dialog-actions"><button id="cancelRequest" class="button" type="button">Cancel</button><button id="submitRequest" class="button button-primary" type="submit">Run checks & submit</button></div>
       <section id="requestResult" class="request-result" hidden aria-live="polite"></section>
     </form>
   </dialog>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="app.js"></script>
+  <script src="app.js" type="module"></script>
 </body>
 </html>

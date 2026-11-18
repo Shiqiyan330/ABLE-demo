@@ -1,0 +1,26 @@
+import assert from 'node:assert/strict';
+import { DEFAULT_WATERFALL, validWaterfall, buildWaterfallPlan } from '../liquidity.js';
+
+const balances = { cash: 100, mmf: 200, governmentBonds: 100, stablecoin: 10, corporateBonds: 50 };
+assert.equal(validWaterfall(DEFAULT_WATERFALL), true);
+assert.equal(validWaterfall(['wCBDC', 'tMMF', 'tGOVBOND', 'USDC', 'USDC']), false);
+assert.equal(validWaterfall(DEFAULT_WATERFALL.slice(1)), false);
+const cash = buildWaterfallPlan(50, balances, DEFAULT_WATERFALL, .05, 7.8);
+assert.deepEqual(cash.legs.map(leg => leg.asset), ['wCBDC']);
+assert.equal(cash.cashNeeded, 0);
+const mixed = buildWaterfallPlan(400, balances, DEFAULT_WATERFALL, .05, 7.8);
+assert.deepEqual(mixed.legs.map(leg => leg.asset), ['wCBDC', 'tMMF', 'tGOVBOND', 'USDC']);
+assert.deepEqual(mixed.legs.map(leg => leg.quoteOutput), [100, 190, 95, 15]);
+assert.equal(mixed.legs[3].assetInput, 2.03);
+assert.equal(mixed.shortfall, 0);
+const preserveCash = buildWaterfallPlan(50, balances, ['USDC', 'tMMF', 'tGOVBOND', 'tCORPBOND', 'wCBDC'], .05, 7.8);
+assert.deepEqual(preserveCash.legs.map(leg => leg.asset), ['USDC']);
+assert.equal(preserveCash.cashUsed, 0);
+assert.equal(preserveCash.cashNeeded, 50);
+const insufficient = buildWaterfallPlan(1000, balances, DEFAULT_WATERFALL, .05, 7.8);
+assert.equal(insufficient.shortfall, 493.4);
+const cents = buildWaterfallPlan(.08, { stablecoin: .01, cash: .01 }, ['USDC', 'wCBDC', 'tMMF', 'tGOVBOND', 'tCORPBOND'], .05, 7.8);
+assert.deepEqual(cents.legs.map(leg => leg.quoteOutput), [.07, .01]);
+assert.equal(cents.legs[0].assetInput, .01);
+assert.equal(cents.shortfall, 0);
+console.log('Funding waterfall: cash, priority, multiple assets, FX rounding and shortfall passed');

@@ -1,4 +1,5 @@
-const state = { cash: 0, mmf: 0, governmentBonds: 0, corporateBonds: 0, stablecoin: 0, usdHkdRate: 7.8, halted: false, dailyVolume: 0, block: 0, bankBalances: {}, banks: [], selectedBank: 'harbour', requests: [], audit: [], chainEvents: [] };
+import { ASSETS, DEFAULT_WATERFALL, buildWaterfallPlan } from './liquidity.js';
+const state = { cash: 0, mmf: 0, governmentBonds: 0, corporateBonds: 0, stablecoin: 0, usdHkdRate: 7.8, waterfall: [...DEFAULT_WATERFALL], haircut: 0.05, halted: false, dailyVolume: 0, block: 0, bankBalances: {}, banks: [], selectedBank: 'harbour', requests: [], audit: [], chainEvents: [] };
 const fmt = n => `HK$ ${Math.round(n).toLocaleString('en-HK')}`;
 const $ = id => document.getElementById(id);
 let toastTimer;
@@ -29,7 +30,42 @@ function render() {
   $('requestRows').innerHTML = rows.map(r => `<tr><td class="request-id">${r.id}</td><td>${r.time}</td><td>${r.fromBankName || '—'} → ${r.toBankName || '—'}</td><td class="amount-cell">${Math.round(r.amount).toLocaleString('en-HK')} HKD</td><td><span class="trigger-tag">${r.trigger}</span></td><td><span class="result-pill ${r.result === 'Approved' ? 'result-approved' : r.result === 'Manual review' ? 'result-review' : 'result-rejected'}">${r.result}</span></td><td><span class="status-pill ${r.status === 'Executed' ? 'status-executed' : r.status === 'Review required' ? 'status-review' : r.status === 'Rejected' ? 'status-rejected' : 'status-pending'}">${r.status}</span></td><td class="request-id" title="${r.txHash || ''}">${(r.txHash || '').slice(0, 10) || '—'}…</td><td>${r.status === 'Review required' ? `<div class="review-actions"><button class="review-pass" data-review="pass" data-id="${r.id}">Pass</button><button class="review-reject" data-review="reject" data-id="${r.id}">Reject</button></div>` : r.reviewDecision ? `${r.reviewDecision} · ${r.reviewedAt ? new Date(r.reviewedAt).toLocaleTimeString() : ''}` : '—'}</td></tr>`).join('');
   $('showingCount').textContent = `Showing ${rows.length} of ${state.requests.length} requests`;
   $('auditList').innerHTML = state.audit.slice(0, 8).map(a => `<div class="audit-item"><span class="audit-time">${a.time}</span><i class="audit-dot ${a.kind === 'warning' ? 'warning' : a.kind === 'danger' ? 'danger' : ''}"></i><span class="audit-message">${a.text}</span><span class="audit-hash">${a.hash}</span></div>`).join('');
+  renderWaterfall();
 }
+const units = n => n.toLocaleString('en-HK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function planMarkup(plan, title = 'Funding breakdown') {
+  return `<strong>${title}</strong><div class="funding-legs">${plan.map(leg => `<div><span>${ASSETS[leg.asset].label}<small>${ASSETS[leg.asset].currency} ${units(leg.assetInput)}${leg.asset === 'wCBDC' ? ' · direct' : ' · exchange'}</small></span><b>${fmt(leg.quoteOutput)}</b></div>`).join('') || '<p>Enter a payment amount to see the funding route.</p>'}</div>`;
+}
+function renderWaterfall() {
+  const position = state.bankBalances[state.selectedBank] || {};
+  $('waterfallList').innerHTML = state.waterfall.map((asset, index) => {
+    const meta = ASSETS[asset], balance = position[meta.key] || 0;
+    const available = asset === 'wCBDC' ? balance : Math.floor(balance * (asset === 'USDC' ? state.usdHkdRate : 1) * (1 - state.haircut) * 100 + 1e-8) / 100;
+    return `<li><span class="waterfall-rank">${index + 1}</span><div class="waterfall-asset"><strong>${meta.label}</strong><small>${asset} · ${meta.currency} ${units(balance)}</small></div><div class="waterfall-available"><b>${fmt(available)}</b><small>${asset === 'wCBDC' ? 'settlement cash' : 'after haircut'}</small></div><div class="waterfall-moves"><button type="button" data-move="-1" data-asset="${asset}" aria-label="Move ${meta.label} up" ${index === 0 ? 'disabled' : ''}>↑</button><button type="button" data-move="1" data-asset="${asset}" aria-label="Move ${meta.label} down" ${index === state.waterfall.length - 1 ? 'disabled' : ''}>↓</button></div></li>`;
+  }).join('');
+  const latest = state.requests.find(request => request.fundingPlan?.length && request.fromBank === state.selectedBank);
+  $('fundingLast').innerHTML = latest ? `<div class="funding-last-heading">${latest.id} · ${latest.status} · ${latest.fundingAsset === 'AUTO' ? 'Waterfall' : 'Selected asset'}</div>${planMarkup(latest.fundingPlan, latest.status === 'Executed' ? 'Confirmed funding' : 'Planned funding')}` : '<strong>Ready for your first payment</strong><p>Choose a scenario to preview its asset allocation.</p>';
+}
+let savingWaterfall = false;
+async function saveWaterfall(order, focusAsset, direction) {
+  if (savingWaterfall) return;
+  savingWaterfall = true; $('waterfallStatus').textContent = 'Saving order…';
+  try {
+    const response = await fetch('/api/waterfall', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order }) });
+    const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Could not save order');
+    syncState(data); updateQuote(); toast('Funding waterfall saved');
+    if (focusAsset) document.querySelector(`[data-asset="${focusAsset}"][data-move="${direction}"]:not(:disabled)`)?.focus();
+  } catch (error) { toast(error.message); }
+  finally { savingWaterfall = false; $('waterfallStatus').textContent = 'Saved order · shared across banks'; }
+}
+$('waterfallList').addEventListener('click', event => {
+  const button = event.target.closest('[data-move]'); if (!button) return;
+  const order = [...state.waterfall], index = order.indexOf(button.dataset.asset), next = index + Number(button.dataset.move);
+  if (next < 0 || next >= order.length) return;
+  [order[index], order[next]] = [order[next], order[index]];
+  void saveWaterfall(order, button.dataset.asset, button.dataset.move);
+});
+$('restoreWaterfall').addEventListener('click', () => saveWaterfall([...DEFAULT_WATERFALL]));
 function renderLedger(ledger) {
   if (!ledger) return;
   $('ledgerConnection').textContent = ledger.connected ? 'Pause ledger link' : 'Reconnect ledger';
@@ -80,10 +116,28 @@ $('requestRows').addEventListener('click', async event => {
   } catch (error) { toast(error.message); button.disabled = false; }
 });
 $('viewBank').addEventListener('change', async event => { state.selectedBank = event.target.value; const data = await fetch(`/api/state/bank?id=${encodeURIComponent(state.selectedBank)}`).then(r => r.json()); syncState(data); });
+$('fundingBank').addEventListener('change', async event => { state.selectedBank = event.target.value; $('fromBank').value = state.selectedBank; const data = await fetch(`/api/state/bank?id=${encodeURIComponent(state.selectedBank)}`).then(r => r.json()); syncState(data); updateQuote(); });
 $('closeDialog').addEventListener('click', () => $('requestDialog').close()); $('cancelRequest').addEventListener('click', () => $('requestDialog').close());
-function updateAssetInput() { const isUsd = $('fundingAsset').value === 'USDC'; const rate = isUsd ? state.usdHkdRate : 1; const quoteOutput = Number($('quoteOutput').value || 0); $('assetInput').value = (Math.ceil(quoteOutput / (rate * (1 - Number($('haircut').value) / 100)) * 100 - 1e-8) / 100).toFixed(2); $('assetInputLabel').textContent = `Asset input after haircut (${isUsd ? 'USD' : 'HKD'})`; $('quoteNote').textContent = isUsd ? `Simulated quote: US$1 = HK$${state.usdHkdRate.toFixed(2)}. Haircut: ${Number($('haircut').value).toFixed(1)}%.` : 'Every request is checked again before execution.'; }
-function updateQuote() { const payer = state.bankBalances[$('fromBank')?.value] || { cash: state.cash }; const gap = Math.max(0, Number($('paymentAmount').value || 0) - payer.cash); $('quoteOutput').value = gap.toFixed(2); $('minimumOutput').value = gap.toFixed(2); updateAssetInput(); }
-$('quoteOutput').addEventListener('input', updateAssetInput);
+function updateAssetInput() { const isUsd = $('fundingAsset').value === 'USDC'; const rate = isUsd ? state.usdHkdRate : 1; const quoteOutput = Number($('quoteOutput').value || 0); $('assetInput').value = (Math.ceil(quoteOutput / (rate * (1 - state.haircut)) * 100 - 1e-8) / 100).toFixed(2); $('assetInputLabel').textContent = `Asset input after haircut (${isUsd ? 'USD' : 'HKD'})`; $('quoteNote').textContent = isUsd ? `Simulated quote: US$1 = HK$${state.usdHkdRate.toFixed(2)}. Haircut: ${(state.haircut * 100).toFixed(1)}%.` : 'Every request is checked again before execution.'; }
+function updateQuote() {
+  const payer = state.bankBalances[$('fromBank')?.value] || { cash: state.cash }, amount = Number($('paymentAmount').value || 0), auto = $('fundingAsset').value === 'AUTO';
+  const plan = auto ? buildWaterfallPlan(amount, payer, state.waterfall, state.haircut, state.usdHkdRate) : null;
+  const gap = plan ? plan.cashNeeded : Math.max(0, amount - payer.cash);
+  $('quoteOutput').value = gap.toFixed(2); $('minimumOutput').value = gap.toFixed(2);
+  $('quoteOutput').readOnly = auto; $('minimumOutput').readOnly = auto;
+  updateAssetInput();
+  if (auto) { $('assetInput').value = 'See funding breakdown'; $('assetInputLabel').textContent = 'Asset inputs'; $('quoteNote').textContent = 'Saved priority order · current holdings · each exchange includes the saved haircut.'; }
+  renderFundingPreview(plan);
+}
+function renderFundingPreview(plan) {
+  const amount = Number($('paymentAmount').value || 0), payer = state.bankBalances[$('fromBank').value] || { cash: state.cash };
+  const legs = plan?.legs || [
+    ...(amount > 0 && payer.cash > 0 ? [{ asset: 'wCBDC', assetInput: Math.min(amount, payer.cash), quoteOutput: Math.min(amount, payer.cash) }] : []),
+    ...(Number($('quoteOutput').value) > 0 ? [{ asset: $('fundingAsset').value, assetInput: Number($('assetInput').value), quoteOutput: Number($('quoteOutput').value) }] : [])
+  ];
+  $('fundingPreview').innerHTML = planMarkup(legs, 'Planned funding') + (plan?.shortfall > 0 ? `<p class="funding-shortfall">Unfunded: ${fmt(plan.shortfall)} · request will fail the liquidity check</p>` : '');
+}
+$('quoteOutput').addEventListener('input', () => { updateAssetInput(); renderFundingPreview(); });
 $('paymentAmount').addEventListener('input', updateQuote); $('haircut').addEventListener('input', updateQuote); $('fromBank').addEventListener('change', updateQuote); $('fundingAsset').addEventListener('change', updateQuote);
 $('requestForm').addEventListener('submit', async event => {
   event.preventDefault(); const button = $('submitRequest'); button.disabled = true; button.textContent = 'Checking request…';
@@ -91,7 +145,7 @@ $('requestForm').addEventListener('submit', async event => {
   try {
     const preflight = await fetch('/api/evaluate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).then(r => r.json());
     if (preflight.error) throw new Error(preflight.error);
-    await playChecks(preflight.checks);
+    await playChecks(preflight.checks, preflight.fundingPlan);
     button.textContent = preflight.result === 'Approved' ? 'Submitting to local chain…' : 'Recording decision…';
     const response = await fetch('/api/payment', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); const data = await response.json(); if (data.state) syncState(data.state); showResult(data.request, data.error);
   }
@@ -99,9 +153,10 @@ $('requestForm').addEventListener('submit', async event => {
   finally { button.disabled = false; button.textContent = 'Run checks & submit'; }
 });
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
-async function playChecks(checks) {
+async function playChecks(checks, fundingPlan) {
   const box = $('requestResult'); box.hidden = false; box.className = 'request-result checking';
   box.innerHTML = `<div class="result-summary">RegTech pre-execution checks</div><div class="check-progress" role="status">Evaluating request against policy controls…</div><div class="rule-list">${checks.map((check, index) => `<div class="rule-line check-pending" id="check-${index}"><i></i><span>${check.name}</span><small>Waiting</small></div>`).join('')}</div>`;
+  if (fundingPlan) box.insertAdjacentHTML('beforeend', planMarkup(fundingPlan));
   for (let i = 0; i < checks.length; i++) {
     const line = $(`check-${i}`); line.className = 'rule-line check-running'; line.querySelector('small').textContent = 'Checking';
     await pause(260);
@@ -118,6 +173,8 @@ function showResult(request, error) {
   if (!request) { box.innerHTML = `<div class="result-summary">Request failed</div><p>${error || 'Could not submit request'}</p>`; return; }
   const checks = request.checks || [];
   box.innerHTML = `<div class="result-summary">${request.id} · ${request.status} · ${request.reason}</div><div class="rule-list">${checks.map(c => `<div class="rule-line ${c.passed ? 'check-passed' : 'check-failed'}"><i></i><span>${c.name}</span><small>${c.passed ? 'Passed' : c.reason}</small></div>`).join('')}</div>${request.swapTxHash ? `<div class="result-tx">DvP swap tx: ${request.swapTxHash}</div>` : ''}${request.txHash ? `<div class="result-tx">Payment tx: ${request.txHash}</div>` : ''}<div class="result-tx">Request: ${request.id} · from ${request.from || '—'} · to ${request.to || '—'}</div>`;
+  if (request.fundingPlan) box.insertAdjacentHTML('beforeend', planMarkup(request.fundingPlan, request.status === 'Executed' ? 'Confirmed funding' : 'Planned funding'));
+  for (const hash of (request.swapTxHashes || []).slice(0, -1)) box.insertAdjacentHTML('beforeend', `<div class="result-tx">DvP swap tx: ${hash}</div>`);
 }
 $('haircut').addEventListener('input', e => { $('haircutValue').value = `${Number(e.target.value).toFixed(1)}%`; });
 $('savePolicy').addEventListener('click', () => { const policy = { tradeLimit: Number($('tradeLimit').value), dailyLimit: Number($('dailyLimit').value), haircut: Number($('haircut').value) }; if (policy.tradeLimit <= 0 || policy.dailyLimit < policy.tradeLimit) { toast('Check the policy limits before saving'); return; } fetch('/api/policy', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(policy) }).then(r => r.json()).then(data => { syncState(data); toast('Policy settings saved for new requests'); }); });
@@ -129,10 +186,10 @@ $('runBenchmark').addEventListener('click', async () => { const button = $('runB
 $('menuButton').addEventListener('click', () => toast('Treasury operator · local simulation'));
 document.querySelectorAll('[data-scroll]').forEach(el => el.addEventListener('click', () => document.getElementById(el.dataset.scroll).scrollIntoView({ behavior: 'smooth' })));
 const workspaceTargets = {
-  dashboard: ['.demo-flow', '.metrics-grid'],
+  dashboard: ['.demo-flow', '.metrics-grid', '.funding-workspace'],
   positions: ['.content-grid'],
   limits: ['.content-grid'],
-  trading: ['.demo-flow', '#activity', '#events'],
+  trading: ['.demo-flow', '.funding-workspace', '#activity', '#events'],
   audit: ['#audit', '.advanced-panels']
 };
 function setWorkspace(name) {
@@ -167,12 +224,14 @@ function syncState(data) {
   if (data.type === 'ledger-sync-error') { $('ledgerStatus').textContent = `${data.pending} POSTINGS WAITING TO REPLAY`; $('ledgerStatus').classList.add('ledger-error'); toast('Settlement confirmed; shadow ledger sync is pending'); return; }
   const snapshot = data.type === 'state' ? data.data : data;
   if (snapshot.market) state.usdHkdRate = snapshot.market.usdHkdRate;
+  if (snapshot.waterfall) state.waterfall = [...snapshot.waterfall];
   if (snapshot.balances) Object.assign(state, { cash: snapshot.balances.cash, mmf: snapshot.balances.mmf, governmentBonds: snapshot.balances.governmentBonds || 0, corporateBonds: snapshot.balances.corporateBonds || 0, stablecoin: snapshot.balances.stablecoin || 0 });
   if (snapshot.banks) {
     const from = $('fromBank').value, to = $('toBank').value;
     state.banks = snapshot.banks; state.bankBalances = Object.fromEntries(snapshot.banks.map(bank => [bank.id, bank]));
-    for (const control of ['viewBank', 'fromBank', 'toBank']) $(control).innerHTML = snapshot.banks.map(bank => `<option value="${bank.id}">${bank.name}</option>`).join('');
+    for (const control of ['viewBank', 'fundingBank', 'fromBank', 'toBank']) $(control).innerHTML = snapshot.banks.map(bank => `<option value="${bank.id}">${bank.name}</option>`).join('');
     $('viewBank').value = state.selectedBank;
+    $('fundingBank').value = state.selectedBank;
     $('fromBank').value = from || state.selectedBank;
     $('toBank').value = to || snapshot.banks.find(bank => bank.id !== $('fromBank').value)?.id;
     const selected = state.bankBalances[state.selectedBank]; Object.assign(state, { cash: selected.cash, mmf: selected.mmf, governmentBonds: selected.governmentBonds || 0, corporateBonds: selected.corporateBonds || 0, stablecoin: selected.stablecoin || 0 });
@@ -193,8 +252,9 @@ function syncState(data) {
     $('rtgsBatchList').innerHTML = snapshot.rtgs.batches.length ? snapshot.rtgs.batches.map(batch => `<article class="rtgs-batch"><div class="rtgs-batch-top"><strong>${batch.batchId}</strong><span>${batch.messageType}</span></div><small>${batch.createdAt} · ${batch.settlementAsset}</small><div class="rtgs-net-lines">${batch.netPositions.map(pos => `<span>${pos.bank}</span><b>${pos.netCredit > 0 ? '+' : ''}${fmt(pos.netCredit)} HKD</b>`).join('')}</div><div class="rtgs-message-count">${batch.messages.length} simulated credit messages</div></article>`).join('') : '<div class="rtgs-empty">No reopening batches generated in this session.</div>';
   }
   if (typeof snapshot.halted === 'boolean') state.halted = snapshot.halted;
-  if (snapshot.policy) { $('tradeLimit').value = snapshot.policy.tradeLimit; $('dailyLimit').value = snapshot.policy.dailyLimit; $('haircut').value = snapshot.policy.haircut; $('haircutValue').value = `${Number(snapshot.policy.haircut).toFixed(1)}%`; }
+  if (snapshot.policy) { state.haircut = snapshot.policy.haircut / 100; $('tradeLimit').value = snapshot.policy.tradeLimit; $('dailyLimit').value = snapshot.policy.dailyLimit; $('haircut').value = snapshot.policy.haircut; $('haircutValue').value = `${Number(snapshot.policy.haircut).toFixed(1)}%`; }
   render();
+  if ($('requestDialog').open && !$('submitRequest').disabled) updateQuote();
 }
 $('clock').textContent = `${nowHkt()} HKT`; render();
 fetch('/api/state').then(r => r.json()).then(data => { syncState(data); updateQuote(); }).catch(() => toast('Connect to the local ABLE service to enable live execution'));
@@ -206,11 +266,14 @@ function renderChainEvents() {
   $('chainEventList').innerHTML = state.chainEvents.slice(0, 8).map(event => `<article class="chain-event"><strong>${event.name}</strong><span>${event.detail}</span><small>Block ${event.block}</small><code title="${event.hash}">${event.hash}</code></article>`).join('') || 'Submit a payment to see confirmed contract events.';
 }
 document.querySelectorAll('[data-scenario]').forEach(button => button.addEventListener('click', () => {
-  $('fromBank').value = button.dataset.scenario === 'swap' ? 'meridian' : 'harbour';
+  const scenario = button.dataset.scenario, assetCases = { swap: 'tMMF', government: 'tGOVBOND', corporate: 'tCORPBOND', stablecoin: 'USDC' };
+  $('fromBank').value = scenario in assetCases || scenario === 'auto' ? 'meridian' : 'harbour';
   state.selectedBank = $('fromBank').value; $('viewBank').value = state.selectedBank;
+  $('fundingBank').value = state.selectedBank;
   const position = state.bankBalances[state.selectedBank]; if (position) { Object.assign(state, { cash: position.cash, mmf: position.mmf, governmentBonds: position.governmentBonds || 0, corporateBonds: position.corporateBonds || 0, stablecoin: position.stablecoin || 0 }); render(); }
   $('toBank').value = 'eastbridge';
-  $('paymentAmount').value = button.dataset.scenario === 'swap' ? 1600000 : button.dataset.scenario === 'limit' ? 2500000 : 500000;
-  $('counterpartySelect').value = button.dataset.scenario === 'review' ? 'Unlisted Counterparty' : 'Harbour Liquidity Pool';
+  $('fundingAsset').value = scenario === 'cash' ? 'tMMF' : assetCases[scenario] || 'AUTO';
+  $('paymentAmount').value = scenario === 'corporate' ? 1400000 : scenario in assetCases || scenario === 'auto' ? 1600000 : scenario === 'limit' ? 2500000 : 500000;
+  $('counterpartySelect').value = scenario === 'review' ? 'Unlisted Counterparty' : 'Harbour Liquidity Pool';
   simulatePayment();
 }));
