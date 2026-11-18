@@ -186,10 +186,10 @@ $('runBenchmark').addEventListener('click', async () => { const button = $('runB
 $('menuButton').addEventListener('click', () => toast('Treasury operator · local simulation'));
 document.querySelectorAll('[data-scroll]').forEach(el => el.addEventListener('click', () => document.getElementById(el.dataset.scroll).scrollIntoView({ behavior: 'smooth' })));
 const workspaceTargets = {
-  dashboard: ['.demo-flow', '.metrics-grid', '.funding-workspace'],
+  dashboard: ['.metrics-grid', '.funding-workspace'],
   positions: ['.content-grid'],
   limits: ['.content-grid'],
-  trading: ['.demo-flow', '.funding-workspace', '#activity', '#events'],
+  trading: ['.funding-workspace', '#activity', '#events'],
   audit: ['#audit', '.advanced-panels']
 };
 function setWorkspace(name) {

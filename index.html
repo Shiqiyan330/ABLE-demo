@@ -29,7 +29,6 @@
 
       <section class="status-strip" aria-label="System status"><div><span class="status-indicator"></span><strong id="systemStatus">SYSTEM OPERATIONAL</strong><span class="status-divider"></span><span>RTGS <b id="rtgsStatus">OPEN · 09:00–18:00 HKT</b></span><span class="status-divider"></span><span>Reserve backing <b id="reserveRatio">1:1 · simulated escrow</b></span></div><div class="status-actions"><button id="rtgsToggle" class="text-button" type="button">Close RTGS window</button><span class="env-tag">INTERBANK SIMULATION</span></div></section>
 
-      <section class="demo-flow" aria-label="Demo workflow"><div><strong>One payment. Every step visible.</strong><p>Request → policy checks → liquidity exchange → bank settlement → event stream</p></div><div class="scenario-buttons"><button class="button button-primary" data-scenario="auto">New payment · waterfall</button><button class="button" data-scenario="limit">Limit breach</button><button class="button" data-scenario="review">Manual review</button></div></section>
       <section class="metrics-grid" aria-label="Treasury balances">
         <article class="metric"><div class="metric-top"><span>Settlement cash</span><span class="metric-icon cash-icon">HKD</span></div><div class="metric-value" id="cashValue">—</div><div class="metric-foot"><span class="tiny-dot green"></span>Available for settlement</div><div class="metric-bar"><i id="cashMetricBar" style="width:0%;background:#19a58b"></i></div></article>
         <article class="metric"><div class="metric-top"><span>Tokenised MMF</span><span class="metric-icon mmf-icon">MMF</span></div><div class="metric-value" id="mmfValue">—</div><div class="metric-foot"><span class="tiny-dot blue"></span>Available for liquidity exchange</div><div class="metric-bar"><i id="mmfMetricBar" style="width:0%;background:#5e83d6"></i></div></article>
@@ -48,8 +47,9 @@
           <p class="funding-note">Move assets up or down. Assets ahead of cash are converted first, preserving the cash balance. All payments settle in HKD wCBDC.</p>
           <div id="fundingLast" class="funding-last"></div>
         </article>
-        <article class="panel cases-panel">
-          <div class="panel-heading"><div><h2>Settlement scenarios</h2><p>Load a request, inspect its funding route, then run checks</p></div><span class="policy-badge">5 ASSETS</span></div>
+        <article class="panel cases-panel" aria-label="Payment demos">
+          <div class="panel-heading"><div><h2>Payment demos</h2><p>Choose a scenario to preview and submit a payment</p></div><span class="policy-badge">8 SCENARIOS</span></div>
+          <p class="payment-demo-flow">Request → policy checks → liquidity exchange → bank settlement → event stream</p>
           <div class="case-grid">
             <button class="case-card" data-scenario="cash"><span class="case-tag">01 · wCBDC</span><strong>Cash on hand</strong><span>Harbour → Eastbridge · HK$500k</span><small>Pay directly from settlement cash.</small></button>
             <button class="case-card" data-scenario="swap"><span class="case-tag">02 · MMF</span><strong>Release MMF liquidity</strong><span>Meridian → Eastbridge · HK$1.6m</span><small>Cash + MMF exchange through atomic DvP.</small></button>
@@ -57,6 +57,8 @@
             <button class="case-card" data-scenario="stablecoin"><span class="case-tag">04 · USD STABLECOIN</span><strong>Bridge USD into HKD</strong><span>Meridian → Eastbridge · HK$1.6m</span><small>USD stablecoin → HKD wCBDC at 7.80.</small></button>
             <button class="case-card" data-scenario="corporate"><span class="case-tag">05 · CORPORATE BONDS</span><strong>Unlock corporate holdings</strong><span>Meridian → Eastbridge · HK$1.4m</span><small>Use corporate bonds to fund the cash gap.</small></button>
             <button class="case-card case-waterfall" data-scenario="auto"><span class="case-tag">06 · YOUR WATERFALL</span><strong>Compare the funding order</strong><span>Meridian → Eastbridge · HK$1.6m</span><small>Load the same payment with your saved order.</small></button>
+            <button class="case-card" data-scenario="limit"><span class="case-tag">07 · RISK LIMIT</span><strong>Limit breach</strong><span>Harbour → Eastbridge · HK$2.5m</span><small>Check a payment against your saved risk limits.</small></button>
+            <button class="case-card" data-scenario="review"><span class="case-tag">08 · COUNTERPARTY</span><strong>Manual review</strong><span>Harbour → Eastbridge · HK$500k</span><small>Request review for an unlisted liquidity facility.</small></button>
           </div>
           <p class="funding-note">Cases use current holdings and saved risk controls. Reset demo restores balances and the default order.</p>
         </article>
